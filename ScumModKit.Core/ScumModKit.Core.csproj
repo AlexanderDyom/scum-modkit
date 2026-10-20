@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ScumModKit</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- AssetRegistry, PakWriter, PakPriority, GameLocator: shared with ScumRegistryMerger, used in place for now
+         (moving them into ScumModKit.Core is step 6 of ARCHITECTURE.md). -->
+    <ProjectReference Include="..\..\registry_merger\Core\RegistryMerger.Core.csproj" />
+  </ItemGroup>
+
+</Project>
