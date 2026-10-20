@@ -1,9 +1,11 @@
 // modkit: command line of ScumModKit.
 using ScumModKit.Game;
 using ScumModKit.Pak;
+using ScumModKit.Clone;
 using ScumModKit.Registry;
 using ScumModKit.Build;
 using ScumModKit.Hashing;
+using ScumModKit.Package;
 
 try
 {
@@ -42,6 +44,13 @@ static class Cli
               a package (/Game/Folder/Name: .uasset, .uexp, .ubulk...) or every file under a folder (/Game/Folder,
               SCUM/Content/Folder).
 
+          modkit pkg verify <file.uasset|dir>          load + save every package, compare byte for byte, check name hashes
+          modkit pkg names <file.uasset>               name map, imports and exports
+
+          modkit clone [<modkit.json>] [--stage <dir>] [--journal <journal.jsonl>] [--clone ...]... [--paks ...] [--key ...]
+              Clones the template packages of every clone from the game into the stage under their new names: the
+              name map is renamed (paths and whole-word short names, also Default__X and X_C), the rest is copied.
+
           modkit reg game <paks> <key file> <out.bin>   the game's own AssetRegistry.bin
           modkit reg hashes <AssetRegistry.bin>         check every name hash of the name batch (CityHash64)
           modkit reg diff <base.bin> <other.bin>        records of other that base lacks, with tags
@@ -56,7 +65,9 @@ static class Cli
         {
             "pack" => Pack(args[1..]),
             "extract" => Extract(args[1..]),
+            "clone" => Clone(args[1..]),
             "reg" when args.Length >= 2 => Reg(args[1], args[2..]),
+            "pkg" when args.Length >= 2 => Pkg(args[1], args[2..]),
             _ => throw new ArgumentException($"unknown command {args[0]} (modkit --help)"),
         };
     }
@@ -83,14 +94,7 @@ static class Cli
                 case "--registry-out": regOut = Next(); break;
                 case "--data-order-from": orderFrom = Next(); break;
                 case "--registry": mode = Enum.Parse<RegistryMode>(Next(), ignoreCase: true); break;
-                case "--clone":
-                {
-                    var pairs = Next().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                        .Select(p => p.Split('=', 2)).Select(p => p.Length == 2 ? new PackagePair { Old = p[0], New = p[1] } : throw new ArgumentException("--clone wants /Game/Old=/Game/New"))
-                        .ToList();
-                    clones.Add(new CloneSpec { Packages = pairs }.ToGroup());
-                    break;
-                }
+                case "--clone": clones.Add(ParseClone(Next())); break;
                 default:
                     if (args[i].StartsWith('-') || project != null) throw new ArgumentException($"unexpected argument {args[i]}");
                     project = args[i];
@@ -98,18 +102,8 @@ static class Cli
             }
         }
 
-        var groups = new Dictionary<string, CloneGroup>(StringComparer.OrdinalIgnoreCase);
-        string? pakName = null;
-        if (project != null)
-        {
-            var p = ModProject.Load(project);
-            stage ??= p.Resolve(p.Stage);
-            pakName = p.Pak;
-            foreach (var g in p.CloneGroups()) groups[g.NewPrimary] = g;
-        }
-        if (journal != null) foreach (var g in ScumStudioJournal.ReadClones(journal)) groups[g.NewPrimary] = g;
-        foreach (var g in clones) groups[g.NewPrimary] = g;
-
+        var (groupList, projStage, pakName) = CollectClones(project, journal, clones);
+        stage ??= projStage;
         if (stage == null) throw new ArgumentException("no stage folder (--stage or \"stage\" in modkit.json)");
         if (outPak == null)
         {
@@ -122,18 +116,75 @@ static class Cli
 
         var r = ModPacker.Pack(new PackOptions
         {
-            Stage = stage, OutputPak = outPak, Clones = [.. groups.Values], Registry = mode, Paks = paks, KeyFile = key,
+            Stage = stage, OutputPak = outPak, Clones = groupList, Registry = mode, Paks = paks, KeyFile = key,
             Sig = sig == "none" ? "" : sig, RegistryOut = regOut, DataOrderFrom = orderFrom,
         });
 
         Console.WriteLine($"pak: {Path.GetFullPath(outPak)} ({r.Files} files, {r.PakSize:N0} bytes)");
         if (r.SigFrom != null) Console.WriteLine($"sig: copied from {Path.GetFileName(r.SigFrom)}");
         if (r.RegistryBuilt)
-            Console.WriteLine($"registry: game {r.GameRecords} records + {r.Clones!.Records} clone records ({groups.Count} clones)" +
+            Console.WriteLine($"registry: game {r.GameRecords} records + {r.Clones!.Records} clone records ({groupList.Count} clones)" +
                               (r.Clones.Skipped.Count > 0 ? $", {r.Clones.Skipped.Count} packages already registered" : ""));
         else Console.WriteLine(r.RegistryShipped ? "registry: the stage's file, unchanged" : "registry: none");
         foreach (var w in r.Warnings) Console.WriteLine("warning: " + w);
         return 0;
+    }
+
+    // ------------------------------------------------------------------ clone
+
+    static int Clone(string[] args)
+    {
+        string? project = null, stage = null, journal = null, paks = null, key = null;
+        var clones = new List<CloneGroup>();
+        for (var i = 0; i < args.Length; i++)
+        {
+            string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value");
+            switch (args[i])
+            {
+                case "--stage": stage = Next(); break;
+                case "--journal": journal = Next(); break;
+                case "--paks": paks = Next(); break;
+                case "--key": key = Next(); break;
+                case "--clone": clones.Add(ParseClone(Next())); break;
+                default:
+                    if (args[i].StartsWith('-') || project != null) throw new ArgumentException($"unexpected argument {args[i]}");
+                    project = args[i];
+                    break;
+            }
+        }
+        var (groups, projStage, _) = CollectClones(project, journal, clones);
+        stage ??= projStage ?? throw new ArgumentException("no stage folder (--stage or \"stage\" in modkit.json)");
+        if (groups.Count == 0) throw new ArgumentException("no clones");
+        using var game = OpenGame(paks, key, stage);
+        var files = PackageCloner.CloneInto(game, groups, stage);
+        Console.WriteLine($"{groups.Count} clones, {groups.Sum(g => g.Packages.Count)} packages, {files.Count} files -> {Path.GetFullPath(stage)}");
+        return 0;
+    }
+
+    static CloneGroup ParseClone(string value)
+    {
+        var pairs = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(p => p.Split('=', 2))
+            .Select(p => p.Length == 2 ? new PackagePair { Old = p[0], New = p[1] } : throw new ArgumentException("--clone wants /Game/Old=/Game/New"))
+            .ToList();
+        return new CloneSpec { Packages = pairs }.ToGroup();
+    }
+
+    /// <summary>Clones of modkit.json, then the journal's, then --clone (a later clone of the same primary wins).</summary>
+    static (List<CloneGroup> Groups, string? Stage, string? PakName) CollectClones(string? project, string? journal, List<CloneGroup> clones)
+    {
+        var groups = new Dictionary<string, CloneGroup>(StringComparer.OrdinalIgnoreCase);
+        string? stage = null, pakName = null;
+        if (project != null)
+        {
+            var p = ModProject.Load(project);
+            stage = p.Resolve(p.Stage);
+            pakName = p.Pak;
+            foreach (var g in p.CloneGroups()) groups[g.NewPrimary] = g;
+        }
+        if (journal != null) foreach (var g in ScumStudioJournal.ReadClones(journal)) groups[g.NewPrimary] = g;
+        foreach (var g in clones) groups[g.NewPrimary] = g;
+        return ([.. groups.Values], stage, pakName);
     }
 
     // ------------------------------------------------------------------ extract
@@ -185,6 +236,59 @@ static class Cli
             if (File.Exists(f)) return f;
         }
         return null;
+    }
+
+    // ------------------------------------------------------------------ pkg
+
+    static int Pkg(string cmd, string[] a)
+    {
+        switch (cmd)
+        {
+            case "verify" when a.Length == 1:
+            {
+                var files = Directory.Exists(a[0]) ? Directory.EnumerateFiles(a[0], "*.uasset", SearchOption.AllDirectories).ToList() : [a[0]];
+                int ok = 0, bad = 0, unsupported = 0;
+                foreach (var f in files)
+                {
+                    var uasset = File.ReadAllBytes(f);
+                    var uexpPath = Path.ChangeExtension(f, ".uexp");
+                    var uexp = File.Exists(uexpPath) ? File.ReadAllBytes(uexpPath) : [];
+                    try
+                    {
+                        var pkg = CookedPackage.Load(uasset, uexp);
+                        var hashBad = pkg.Names.Count(n => n.NonCaseHash != NameHashes.StrihashDeprecated(n.Text) || n.CaseHash != NameHashes.StrCrc32(n.Text));
+                        var (u1, u2) = pkg.Save();
+                        if (u1.AsSpan().SequenceEqual(uasset) && u2.AsSpan().SequenceEqual(uexp) && hashBad == 0) ok++;
+                        else { bad++; Console.WriteLine($"DIFF {f}: uasset {(u1.AsSpan().SequenceEqual(uasset) ? "same" : "differs")}, uexp {(u2.AsSpan().SequenceEqual(uexp) ? "same" : "differs")}, name hash mismatches {hashBad}"); }
+                    }
+                    catch (Exception ex) when (ex is NotSupportedException or FormatException or ArgumentException or InvalidOperationException)
+                    {
+                        unsupported++;
+                        Console.WriteLine($"SKIP {f}: {ex.Message}");
+                        if (Environment.GetEnvironmentVariable("MODKIT_DEBUG") == "1") Console.WriteLine(ex.StackTrace);
+                    }
+                }
+                Console.WriteLine($"{ok} identical, {bad} different, {unsupported} not supported");
+                return bad == 0 ? 0 : 2;
+            }
+            case "names" when a.Length == 1:
+            {
+                var pkg = CookedPackage.Load(a[0]);
+                for (var i = 0; i < pkg.Names.Count; i++) Console.WriteLine($"name {i}: {pkg.Names[i].Text}");
+                for (var i = 0; i < pkg.Imports.Count; i++)
+                {
+                    var im = pkg.Imports[i];
+                    Console.WriteLine($"import {-i - 1}: {pkg.NameText(im.ClassPackage)}.{pkg.NameText(im.ClassName)} {pkg.ObjectPath(-i - 1)}");
+                }
+                for (var i = 0; i < pkg.Exports.Count; i++)
+                {
+                    var e = pkg.Exports[i];
+                    Console.WriteLine($"export {i + 1}: {pkg.ObjectPath(i + 1)} class={pkg.ObjectPath(e.ClassIndex)} size={e.SerialSize}");
+                }
+                return 0;
+            }
+        }
+        throw new ArgumentException("bad pkg command (modkit --help)");
     }
 
     // ------------------------------------------------------------------ reg

@@ -1,23 +1,10 @@
 // Adds registry records for cloned packages: copies of the template packages' records with the names renamed, the way
 // ScumStudio's project export does it (checked against its output for Food_Mod and Chest_Mod).
 using System.Text;
-using System.Text.RegularExpressions;
+using ScumModKit.Clone;
 using ScumModKit.Hashing;
 
 namespace ScumModKit.Registry;
-
-/// <summary>One cloned package: template package path -> new package path (/Game/...).</summary>
-public sealed record PackageRename(string Old, string New)
-{
-    public string OldShort => Old[(Old.LastIndexOf('/') + 1)..];
-    public string NewShort => New[(New.LastIndexOf('/') + 1)..];
-}
-
-/// <summary>
-/// A clone: a primary asset and the packages cloned with it (item + _ES + base element + recipes...). The renames of a
-/// group apply to every record of the group.
-/// </summary>
-public sealed record CloneGroup(string NewPrimary, IReadOnlyList<PackageRename> Packages);
 
 public sealed class CloneReport
 {
@@ -50,7 +37,7 @@ public static class RecordCloner
 
         foreach (var group in groups.OrderBy(g => g.NewPrimary, StringComparer.OrdinalIgnoreCase))
         {
-            var rename = Renamer(group.Packages);
+            var rename = CloneRenamer.For(group.Packages);
             foreach (var p in group.Packages)
             {
                 if (byPackage.ContainsKey(p.New)) { report.Skipped.Add(p.New); continue; }
@@ -72,24 +59,6 @@ public static class RecordCloner
             }
         }
         return report;
-    }
-
-    /// <summary>
-    /// Replaces template paths and short names by the new ones in one pass, longest match first, so a name that
-    /// contains another (CR_Metal_Chest_Skin vs CR_Metal_Chest) is renamed as a whole.
-    /// </summary>
-    public static Func<string, string> Renamer(IEnumerable<PackageRename> renames)
-    {
-        var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var r in renames)
-        {
-            map.TryAdd(r.Old, r.New);
-            map.TryAdd(r.OldShort, r.NewShort);
-        }
-        if (map.Count == 0) return s => s;
-        var re = new Regex(string.Join("|", map.Keys.OrderByDescending(k => k.Length).ThenBy(k => k, StringComparer.Ordinal).Select(Regex.Escape)),
-            RegexOptions.CultureInvariant);
-        return s => re.Replace(s, m => map[m.Value]);
     }
 
     private static AssetRecord Clone(AssetRegistry reg, AssetRecord t, Func<string, string> rename, PackageRename p)

@@ -1,6 +1,7 @@
 // modkit pack: a stage folder -> mod pak (v11, as repak writes it) + .sig + our registry for the cloned packages.
 using ScumModKit.Game;
 using ScumModKit.Pak;
+using ScumModKit.Clone;
 using ScumModKit.Registry;
 
 namespace ScumModKit.Build;

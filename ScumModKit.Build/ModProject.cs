@@ -1,6 +1,7 @@
 // Where a mod's clones come from: modkit.json (our project file) or a ScumStudio journal (cloneAsset edits).
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ScumModKit.Clone;
 using ScumModKit.Registry;
 
 namespace ScumModKit.Build;
