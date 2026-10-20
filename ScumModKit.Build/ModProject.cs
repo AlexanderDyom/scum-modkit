@@ -1,6 +1,7 @@
 // Where a mod's clones come from: modkit.json (our project file) or a ScumStudio journal (cloneAsset edits).
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using ScumModKit.Build.Ops;
 using ScumModKit.Clone;
 using ScumModKit.Registry;
 
@@ -26,6 +27,10 @@ public sealed class ModProject
     public List<CloneSpec> Clones { get; set; } = [];
     /// <summary>Also take the cloneAsset edits of this ScumStudio journal.</summary>
     public string? Journal { get; set; }
+    /// <summary>Files or folders copied into the stage: from (relative to modkit.json) -> to (path in the pak).</summary>
+    public List<IncludeSpec> Include { get; set; } = [];
+    /// <summary>Cooking recipe edits (recipes, cookbooks, registry, known by default, item texts).</summary>
+    public CookingConfig? Cooking { get; set; }
 
     [JsonIgnore] public string Folder { get; private set; } = ".";
 
@@ -89,6 +94,12 @@ public sealed class CloneSpec
         if (!p.StartsWith('/') || p.Contains('.') || p.EndsWith('/'))
             throw new FormatException($"Not a package path: {p} (expected /Game/Folder/Name, without .Object).");
     }
+}
+
+public sealed class IncludeSpec
+{
+    public string From { get; set; } = "";
+    public string To { get; set; } = "";
 }
 
 public sealed class PackagePair

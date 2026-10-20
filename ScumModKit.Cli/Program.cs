@@ -24,6 +24,11 @@ static class Cli
         modkit - SCUM mod compiler (ScumModKit).
 
         Usage:
+          modkit build <modkit.json> [--stage <empty dir>] [--out <file.pak>] [--no-pack] [--paks ...] [--key ...]
+                       [--data-order-from <pak>]
+              Builds the whole mod: clones from the game, "include" files, "cooking" edits, then pack (pak + .sig +
+              registry). The stage must be empty (default: the project's "stage").
+
           modkit pack [<modkit.json>] [--stage <dir>] [--out <file.pak> | --out-dir <dir>]
                       [--journal <journal.jsonl>] [--clone </Game/Old>=</Game/New>[,</Game/Old2>=</Game/New2>...]]...
                       [--registry auto|build|keep|none] [--registry-out <AssetRegistry.bin>]
@@ -64,6 +69,7 @@ static class Cli
         return args[0] switch
         {
             "pack" => Pack(args[1..]),
+            "build" => Build(args[1..]),
             "extract" => Extract(args[1..]),
             "clone" => Clone(args[1..]),
             "reg" when args.Length >= 2 => Reg(args[1], args[2..]),
@@ -127,6 +133,44 @@ static class Cli
                               (r.Clones.Skipped.Count > 0 ? $", {r.Clones.Skipped.Count} packages already registered" : ""));
         else Console.WriteLine(r.RegistryShipped ? "registry: the stage's file, unchanged" : "registry: none");
         foreach (var w in r.Warnings) Console.WriteLine("warning: " + w);
+        return 0;
+    }
+
+    // ------------------------------------------------------------------ build
+
+    static int Build(string[] args)
+    {
+        string? project = null, stage = null, outPak = null, paks = null, key = null, orderFrom = null;
+        var noPack = false;
+        for (var i = 0; i < args.Length; i++)
+        {
+            string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value");
+            switch (args[i])
+            {
+                case "--stage": stage = Next(); break;
+                case "--out": outPak = Next(); break;
+                case "--paks": paks = Next(); break;
+                case "--key": key = Next(); break;
+                case "--no-pack": noPack = true; break;
+                case "--data-order-from": orderFrom = Next(); break;
+                default:
+                    if (args[i].StartsWith('-') || project != null) throw new ArgumentException($"unexpected argument {args[i]}");
+                    project = args[i];
+                    break;
+            }
+        }
+        if (project == null) throw new ArgumentException("usage: modkit build <modkit.json>");
+        paks ??= GameLocator.FindInstall(InstallKind.Client) ?? throw new ArgumentException("SCUM not found, use --paks");
+        key ??= KeyFile(Path.GetDirectoryName(Path.GetFullPath(project))!) ?? throw new ArgumentException("no AES key file");
+        var (_, r) = ModBuilder.Build(new BuildOptions
+        {
+            Project = project, Stage = stage, OutputPak = outPak, Paks = paks, KeyFile = key, NoPack = noPack, DataOrderFrom = orderFrom,
+        }, Console.WriteLine);
+        if (r != null)
+        {
+            Console.WriteLine($"pak: {r.Files} files, {r.PakSize:N0} bytes" + (r.RegistryBuilt ? $"; registry + {r.Clones!.Records} clone records" : ""));
+            foreach (var w in r.Warnings) Console.WriteLine("warning: " + w);
+        }
         return 0;
     }
 

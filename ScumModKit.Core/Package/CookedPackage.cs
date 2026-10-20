@@ -78,6 +78,24 @@ public sealed class CookedPackage
 
     public void SetName(int index, string text) => Names[index] = NewEntry(text);
 
+    /// <summary>The 8-byte "None" name that ends a list of tagged properties.</summary>
+    public byte[] NoneTag()
+    {
+        var i = FindName("None");
+        if (i < 0) throw new InvalidOperationException("The package has no None name.");
+        return [.. BitConverter.GetBytes(i), 0, 0, 0, 0];
+    }
+
+    /// <summary>The export with this object name.</summary>
+    public ObjectExport Export(string objectName)
+    {
+        var hits = Exports.Where(e => NameText(e.ObjectName) == objectName).ToList();
+        return hits.Count == 1 ? hits[0] : throw new KeyNotFoundException($"{hits.Count} exports named {objectName}.");
+    }
+
+    /// <summary>Number of SoftPackageReferences in the summary (cooked SCUM packages mostly have none).</summary>
+    public int SoftPackageReferenceCount => BinaryPrimitives.ReadInt32LittleEndian(_summary.AsSpan(_posSoftCount));
+
     // ------------------------------------------------------------------ load
 
     public static CookedPackage Load(string uassetPath)
