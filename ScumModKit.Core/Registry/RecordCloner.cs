@@ -2,7 +2,6 @@
 // ScumStudio's project export does it (checked against its output for Food_Mod and Chest_Mod).
 using System.Text;
 using System.Text.RegularExpressions;
-using RegistryMerger;
 using ScumModKit.Hashing;
 
 namespace ScumModKit.Registry;

@@ -1,8 +1,9 @@
 // modkit: command line of ScumModKit.
-using RegistryMerger;
+using ScumModKit.Game;
+using ScumModKit.Pak;
+using ScumModKit.Registry;
 using ScumModKit.Build;
 using ScumModKit.Hashing;
-using ScumModKit.Registry;
 
 try
 {

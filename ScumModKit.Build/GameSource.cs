@@ -5,7 +5,9 @@ using CUE4Parse.FileProvider;
 using CUE4Parse.UE4.Objects.Core.Misc;
 using CUE4Parse.UE4.Versions;
 using CUE4Parse.UE4.VirtualFileSystem;
-using RegistryMerger;
+using ScumModKit.Game;
+using ScumModKit.Pak;
+using ScumModKit.Registry;
 
 namespace ScumModKit.Build;
 
@@ -31,7 +33,7 @@ public sealed class GameSource : IDisposable
     public static GameSource Open(string paks, string keyFile)
     {
         paks = GameLocator.ResolvePaks(paks) ?? throw new DirectoryNotFoundException($"No SCUM Paks folder at {paks}.");
-        var key = MergeEngine.NormalizeKey(File.ReadLines(keyFile).FirstOrDefault())
+        var key = NormalizeKey(File.ReadLines(keyFile).FirstOrDefault())
                   ?? throw new FormatException($"{keyFile} holds no AES key.");
         var provider = new DefaultFileProvider(paks, SearchOption.TopDirectoryOnly, new VersionContainer(EGame.GAME_UE4_27), StringComparer.OrdinalIgnoreCase);
         try
@@ -50,6 +52,16 @@ public sealed class GameSource : IDisposable
             throw new InvalidOperationException("The AES key does not open the game's paks.");
         }
         return new GameSource(paks, provider);
+    }
+
+    /// <summary>"0x" + 64 hex digits, or null for an empty key; FormatException for anything else (the key is not shown).</summary>
+    public static string? NormalizeKey(string? key)
+    {
+        key = (key ?? "").Trim();
+        if (key.Length == 0) return null;
+        if (key.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) key = key[2..];
+        if (key.Length != 64 || !key.All(Uri.IsHexDigit)) throw new FormatException("The AES key must be 64 hex digits (optionally starting with 0x).");
+        return "0x" + key.ToUpperInvariant();
     }
 
     private IEnumerable<IVfsReader> StockPaks => _provider.MountedVfs.Cast<IVfsReader>()
