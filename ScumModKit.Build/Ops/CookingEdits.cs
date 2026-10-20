@@ -16,8 +16,13 @@ public readonly record struct IngredientRef(string? Title, int Index = -1)
     public override string ToString() => Title ?? Index.ToString();
 }
 
-/// <summary>An item that satisfies an ingredient: object path of its class, whole item or uses, amount.</summary>
-public sealed record ItemOption(string Item, bool Whole, int Usage);
+/// <summary>
+/// A variant of an ingredient: object path of the item class, whole item or uses, amount (Usage). Liquids: Resource =
+/// class of the game resource (/Game/ConZ_Files/GameResources/Food/Liquids/Oil.Oil_C), Liters = how much; Item is then
+/// the container item (e.g. VegetableOil), or "" for any container (None, as most stock liquid variants).
+/// Liters on an item variant only sets the field.
+/// </summary>
+public sealed record ItemOption(string Item, bool Whole, int Usage, double? Liters = null, string? Resource = null);
 
 public abstract record RecipeOp;
 /// <summary>Top-level number (CookingTime, CookingTemperature...); added when the recipe relies on the default.</summary>
@@ -26,6 +31,8 @@ public sealed record RemoveIngredient(string Group, IngredientRef Ingredient) : 
 /// <summary>Another item for the ingredient (copy of its first item option).</summary>
 public sealed record AddOption(string Group, IngredientRef Ingredient, ItemOption Option) : RecipeOp;
 public sealed record SetUsage(string Group, IngredientRef Ingredient, int Usage, int? Option = null) : RecipeOp;
+/// <summary>Liters of every variant of the ingredient (or of one, by 0-based index): the amount of a liquid.</summary>
+public sealed record SetLiters(string Group, IngredientRef Ingredient, double Liters, int? Option = null) : RecipeOp;
 /// <summary>Replaces every variant of the ingredient (liquids too) by items.</summary>
 public sealed record SetOptions(string Group, IngredientRef Ingredient, IReadOnlyList<ItemOption> Options) : RecipeOp;
 /// <summary>New ingredient at the end of the group; the title is shown verbatim (not localized).</summary>
@@ -34,6 +41,12 @@ public sealed record AddIngredient(string Group, string Title, IReadOnlyList<Ite
 public sealed record SetText(string Property, string Text) : RecipeOp;
 /// <summary>ResultingFood.Item = object path of the dish class.</summary>
 public sealed record SetResult(string Item) : RecipeOp;
+/// <summary>The ingredient's title shown verbatim (not localized); later refs by title use the new text.</summary>
+public sealed record SetTitle(string Group, IngredientRef Ingredient, string Title) : RecipeOp;
+/// <summary>NutrientInclusionFactor of every variant (or of one, by 0-based index): how much of the item counts for nutrition.</summary>
+public sealed record SetNutrient(string Group, IngredientRef Ingredient, double Factor, int? Option = null) : RecipeOp;
+/// <summary>Utility gameplay tags (where it is cooked): Cooking.Utility.Pan, Cooking.Utility.Oven...</summary>
+public sealed record SetUtilities(IReadOnlyList<string> Tags) : RecipeOp;
 
 public static class CookingEdits
 {
@@ -50,10 +63,12 @@ public static class CookingEdits
             switch (op)
             {
                 case SetResult res: items.Add(res.Item); break;
-                case AddOption a: items.Add(a.Option.Item); break;
-                case SetOptions s: items.UnionWith(s.Options.Select(o => o.Item)); break;
-                case AddIngredient a: items.UnionWith(a.Options.Select(o => o.Item)); break;
+                case AddOption a: items.UnionWith(new[] { a.Option.Item }.Where(i => i.Length > 0)); break;
+                case SetOptions s: items.UnionWith(s.Options.Select(o => o.Item).Where(i => i.Length > 0)); break;
+                case AddIngredient a: items.UnionWith(a.Options.Select(o => o.Item).Where(i => i.Length > 0)); break;
                 case SetNumber n: extra.Add(n.Property); extra.Add("FloatProperty"); break;
+                case SetNutrient: extra.Add("NutrientInclusionFactor"); extra.Add("FloatProperty"); break;
+                case SetUtilities u: extra.UnionWith(u.Tags); break;
             }
         var all = new SortedSet<string>(items, StringComparer.Ordinal);
         all.UnionWith(extra);
@@ -91,11 +106,21 @@ public static class CookingEdits
                 case AddOption a:
                 {
                     var opts = Options(a.Group, a.Ingredient);
-                    var src = opts.FirstOrDefault(o => !o.Get("IsResource").Bool)
-                              ?? throw new InvalidOperationException($"{a.Ingredient}: only resource options (liquids), nothing to copy.");
+                    var src = a.Option.Resource != null
+                        ? opts.FirstOrDefault(o => o.Get("IsResource").Bool) ?? opts[0]
+                        : opts.FirstOrDefault(o => !o.Get("IsResource").Bool)
+                          ?? throw new InvalidOperationException($"{a.Ingredient}: only resource options (liquids), nothing to copy.");
                     var copy = src.Clone();
-                    SetOption(copy, a.Option.Item, a.Option.Whole, a.Option.Usage);
+                    Fill(copy, a.Option);
                     opts.Add(copy);
+                    if (a.Option.Resource != null) SlotIsResource(Ingredient(a.Group, a.Ingredient));
+                    break;
+                }
+                case SetLiters l:
+                {
+                    var opts = Options(l.Group, l.Ingredient);
+                    for (var i = 0; i < opts.Count; i++)
+                        if (l.Option == null || l.Option == i) opts[i].Get("Liters").Value = BitConverter.GetBytes((float)l.Liters);
                     break;
                 }
                 case SetUsage u:
@@ -109,19 +134,23 @@ public static class CookingEdits
                 {
                     var elem = Ingredient(s.Group, s.Ingredient);
                     var tpl = ItemTemplate(elem);
+                    var liquid = s.Options.Any(o => o.Resource != null) ? ResourceTemplate(elem) : null;
                     elem.Get("IsResource").Bool = false;
-                    elem.Get("PossibleIngredient").OpenArray(pkg).Elements = OptionsFrom(tpl, s.Options);
+                    elem.Get("PossibleIngredient").OpenArray(pkg).Elements = OptionsFrom(tpl, liquid, s.Options);
+                    if (s.Options.Any(o => o.Resource != null)) SlotIsResource(elem);
                     break;
                 }
                 case AddIngredient a:
                 {
                     var elems = Elements(a.Group);
                     var tpl = ItemTemplate(null);
+                    var liquid = a.Options.Any(o => o.Resource != null) ? ResourceTemplate(null) : null;
                     var elem = elems[0].Clone();
                     elem.Get("IsResource").Bool = false;
                     var title = elem.Get("IngredientTitle");
                     title.Value = TextValues.Invariant(a.Title);
-                    elem.Get("PossibleIngredient").OpenArray(pkg).Elements = OptionsFrom(tpl, a.Options);
+                    elem.Get("PossibleIngredient").OpenArray(pkg).Elements = OptionsFrom(tpl, liquid, a.Options);
+                    if (a.Options.Any(o => o.Resource != null)) SlotIsResource(elem);
                     elems.Add(elem);
                     break;
                 }
@@ -130,6 +159,30 @@ public static class CookingEdits
                 {
                     var rf = props.Get("ResultingFood").OpenStruct(pkg);
                     rf.Get("Item").NameValue = new FName(Idx(r.Item), 0);
+                    break;
+                }
+                case SetTitle t: Ingredient(t.Group, t.Ingredient).Get("IngredientTitle").Value = TextValues.Invariant(t.Title); break;
+                case SetNutrient n:
+                {
+                    var opts = Options(n.Group, n.Ingredient);
+                    for (var i = 0; i < opts.Count; i++)
+                    {
+                        if (n.Option != null && n.Option != i) continue;
+                        var f = opts[i].Find("NutrientInclusionFactor");
+                        if (f == null) opts[i].Insert(opts[i].Count, f = Property.Simple(pkg, "NutrientInclusionFactor", "FloatProperty", new byte[4]));
+                        f.Value = BitConverter.GetBytes((float)n.Factor);
+                    }
+                    break;
+                }
+                case SetUtilities u:
+                {
+                    // FGameplayTagContainer, natively serialized: int32 count + FName per tag
+                    var p = props.Find("Utility") ?? throw new InvalidOperationException("The recipe has no Utility tags to replace.");
+                    if (p.Type != "StructProperty") throw new NotSupportedException($"Utility is a {p.Type}.");
+                    var v = new byte[4 + 8 * u.Tags.Count];
+                    BinaryPrimitives.WriteInt32LittleEndian(v, u.Tags.Count);
+                    for (var i = 0; i < u.Tags.Count; i++) BinaryPrimitives.WriteInt32LittleEndian(v.AsSpan(4 + 8 * i), Idx(u.Tags[i]));
+                    p.Value = v;
                     break;
                 }
                 default: throw new NotSupportedException($"Unknown recipe op {op}.");
@@ -169,7 +222,7 @@ public static class CookingEdits
             if (item != null)
             {
                 var it = opt.Get("Item");
-                BinaryPrimitives.WriteInt32LittleEndian(it.Value, Idx(item));
+                BinaryPrimitives.WriteInt32LittleEndian(it.Value, Idx(item.Length > 0 ? item : "None")); // "" = None: any container
                 BinaryPrimitives.WriteInt32LittleEndian(it.Value.AsSpan(4), 0);
             }
             if (whole != null) opt.Get("ShouldConsumeWhole").Bool = whole.Value;
@@ -189,12 +242,41 @@ public static class CookingEdits
             throw new InvalidOperationException("The recipe has no item option to copy.");
         }
 
-        private List<PropertyList> OptionsFrom(PropertyList tpl, IEnumerable<ItemOption> items) => items.Select(i =>
+        /// <summary>A liquid option to copy: from elem if it has one, else from anywhere in the recipe, else null.</summary>
+        private PropertyList? ResourceTemplate(PropertyList? elem)
         {
-            var o = tpl.Clone();
-            SetOption(o, i.Item, i.Whole, i.Usage);
+            var pools = new List<PropertyList>();
+            if (elem != null) pools.Add(elem);
+            foreach (var g in Groups.Values)
+                if (props.Find(g) is { } arr) pools.AddRange(arr.OpenArray(pkg).Elements);
+            return pools.SelectMany(e => e.Get("PossibleIngredient").OpenArray(pkg).Elements).FirstOrDefault(o => o.Get("IsResource").Bool);
+        }
+
+        /// <summary>Item variants copy the item template, liquid variants the liquid one (or the item one, made liquid).</summary>
+        private List<PropertyList> OptionsFrom(PropertyList tpl, PropertyList? liquid, IEnumerable<ItemOption> items) => items.Select(i =>
+        {
+            var o = (i.Resource != null ? liquid ?? tpl : tpl).Clone();
+            Fill(o, i);
             return o;
         }).ToList();
+
+        private void Fill(PropertyList opt, ItemOption i)
+        {
+            SetOption(opt, i.Item, i.Whole, i.Usage);
+            if (i.Resource != null)
+            {
+                var dot = i.Resource.LastIndexOf('.');
+                if (dot < 0 || !i.Resource.StartsWith('/')) throw new FormatException($"Resource {i.Resource}: expected /Game/Folder/Name.Name_C.");
+                opt.Get("IsResource").Bool = true;
+                opt.Get("ResourceType").ObjectIndex =
+                    PackageEdits.AddImport(pkg, i.Resource[..dot], i.Resource[(dot + 1)..], "/Script/Engine", "BlueprintGeneratedClass");
+            }
+            if (i.Liters != null) opt.Get("Liters").Value = BitConverter.GetBytes((float)i.Liters.Value);
+        }
+
+        /// <summary>The ingredient counts as a liquid slot when all its variants are liquids (as in the stock recipes).</summary>
+        private void SlotIsResource(PropertyList elem) =>
+            elem.Get("IsResource").Bool = elem.Get("PossibleIngredient").OpenArray(pkg).Elements.All(o => o.Get("IsResource").Bool);
     }
 
     // ------------------------------------------------------------------ recipe lists
@@ -267,23 +349,38 @@ public static class CookingEdits
     /// A recipe op as a JSON array, like the tuples of food_config.py: ["set", prop, value], ["remove", group, ingr],
     /// ["add_option", group, ingr, item, whole, usage], ["usage", group, ingr, usage(, option)],
     /// ["set_options", group, ingr, [[item, whole, usage]...]], ["add_ingredient", group, title, [[...]]],
-    /// ["text", prop, text], ["result", item].
+    /// ["text", prop, text], ["result", item], ["title", group, ingr, text], ["nutrient", group, ingr, factor(, option)],
+    /// ["utility", [tag...]], ["liters", group, ingr, liters(, option)].
+    /// A variant is [item, whole, usage(, liters(, resource))] or {"item", "whole", "usage", "liters", "resource"};
+    /// add_option takes liters and resource as 7th and 8th elements.
     /// </summary>
     public static RecipeOp ParseOp(JsonElement a)
     {
         string S(int i) => a[i].GetString()!;
         IngredientRef I(int i) => a[i].ValueKind == JsonValueKind.Number ? a[i].GetInt32() : S(i);
-        List<ItemOption> L(int i) => a[i].EnumerateArray().Select(o => new ItemOption(o[0].GetString()!, o[1].GetBoolean(), o[2].GetInt32())).ToList();
+        static double? D(JsonElement e) => e.ValueKind == JsonValueKind.Number ? e.GetDouble() : null;
+        static string? R(JsonElement e) => e.ValueKind == JsonValueKind.String ? e.GetString() : null;
+        static ItemOption O(JsonElement o) => o.ValueKind == JsonValueKind.Object
+            ? new ItemOption(o.GetProperty("item").GetString() ?? "", o.GetProperty("whole").GetBoolean(), o.GetProperty("usage").GetInt32(),
+                o.TryGetProperty("liters", out var l) ? D(l) : null, o.TryGetProperty("resource", out var r) ? R(r) : null)
+            : new ItemOption(o[0].GetString() ?? "", o[1].GetBoolean(), o[2].GetInt32(),
+                o.GetArrayLength() > 3 ? D(o[3]) : null, o.GetArrayLength() > 4 ? R(o[4]) : null);
+        List<ItemOption> L(int i) => a[i].EnumerateArray().Select(O).ToList();
         return S(0) switch
         {
             "set" => new SetNumber(S(1), a[2].GetDouble()),
             "remove" => new RemoveIngredient(S(1), I(2)),
-            "add_option" => new AddOption(S(1), I(2), new ItemOption(S(3), a[4].GetBoolean(), a[5].GetInt32())),
+            "add_option" => new AddOption(S(1), I(2), new ItemOption(S(3), a[4].GetBoolean(), a[5].GetInt32(),
+                a.GetArrayLength() > 6 ? D(a[6]) : null, a.GetArrayLength() > 7 ? R(a[7]) : null)),
             "usage" => new SetUsage(S(1), I(2), a[3].GetInt32(), a.GetArrayLength() > 4 ? a[4].GetInt32() : null),
             "set_options" => new SetOptions(S(1), I(2), L(3)),
             "add_ingredient" => new AddIngredient(S(1), S(2), L(3)),
             "text" => new SetText(S(1), S(2)),
             "result" => new SetResult(S(1)),
+            "title" => new SetTitle(S(1), I(2), S(3)),
+            "nutrient" => new SetNutrient(S(1), I(2), a[3].GetDouble(), a.GetArrayLength() > 4 ? a[4].GetInt32() : null),
+            "liters" => new SetLiters(S(1), I(2), a[3].GetDouble(), a.GetArrayLength() > 4 ? a[4].GetInt32() : null),
+            "utility" => new SetUtilities(a[1].EnumerateArray().Select(t => t.GetString()!).ToList()),
             _ => throw new FormatException($"Unknown recipe op {S(0)}."),
         };
     }

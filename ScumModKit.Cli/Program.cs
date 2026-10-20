@@ -52,6 +52,8 @@ static class Cli
 
           modkit pkg verify <file.uasset|dir>          load + save every package, compare byte for byte, check name hashes
           modkit pkg names <file.uasset>               name map, imports and exports
+          modkit pkg props <file.uasset> <export>      tagged properties as a tree (arrays of structs, structs opened)
+          modkit pkg table <file.uasset> [text]        DataTable rows (names containing text)
 
           modkit clone [<modkit.json>] [--stage <dir>] [--journal <journal.jsonl>] [--clone ...]... [--paks ...] [--key ...]
               Clones the template packages of every clone from the game into the stage under their new names: the
@@ -316,6 +318,14 @@ static class Cli
                 Console.WriteLine($"{ok} identical, {bad} different, {unsupported} not supported");
                 return bad == 0 ? 0 : 2;
             }
+            case "props" when a.Length == 2:
+            {
+                var pkg = CookedPackage.Load(a[0]);
+                var ep = ExportProperties.Read(pkg, a[1]);
+                Dump(pkg, ep.Properties, "");
+                if (ep.Tail.Length > 0) Console.WriteLine($"(+ {ep.Tail.Length} native bytes)");
+                return 0;
+            }
             case "table" when a.Length >= 1:
             {
                 var pkg = CookedPackage.Load(a[0]);
@@ -346,6 +356,28 @@ static class Cli
             }
         }
         throw new ArgumentException("bad pkg command (modkit --help)");
+    }
+
+    static void Dump(CookedPackage pkg, PropertyList list, string indent)
+    {
+        foreach (var p in list)
+        {
+            PropertyList? inner = null;
+            List<PropertyList>? elems = null;
+            try
+            {
+                if (p.Type == "StructProperty") inner = p.OpenStruct(pkg);
+                else if (p.Type == "ArrayProperty") elems = p.OpenArray(pkg).Elements;
+            }
+            catch (Exception ex) when (ex is FormatException or NotSupportedException or ArgumentException or IndexOutOfRangeException) { }
+            if (inner != null) { Console.WriteLine($"{indent}{p.Name}: struct"); Dump(pkg, inner, indent + "  "); }
+            else if (elems != null)
+            {
+                Console.WriteLine($"{indent}{p.Name}: array[{elems.Count}]");
+                for (var i = 0; i < elems.Count; i++) { Console.WriteLine($"{indent}  [{i}]"); Dump(pkg, elems[i], indent + "    "); }
+            }
+            else Console.WriteLine($"{indent}{p.Name}: {p.Type} = {Show(pkg, p)}");
+        }
     }
 
     static string Show(CookedPackage pkg, ScumModKit.Properties.Property p) => p.Type switch
