@@ -6,6 +6,7 @@ using ScumModKit.Registry;
 using ScumModKit.Build;
 using ScumModKit.Hashing;
 using ScumModKit.Package;
+using ScumModKit.Properties;
 
 try
 {
@@ -315,6 +316,18 @@ static class Cli
                 Console.WriteLine($"{ok} identical, {bad} different, {unsupported} not supported");
                 return bad == 0 ? 0 : 2;
             }
+            case "table" when a.Length >= 1:
+            {
+                var pkg = CookedPackage.Load(a[0]);
+                var t = DataTable.Read(pkg, pkg.Exports[0]);
+                var (u1, u2) = (t.Object.Export.Data, 0);
+                var before = (byte[])t.Object.Export.Data.Clone();
+                t.Save();
+                Console.WriteLine($"{t.Rows.Count} rows, re-save {(before.AsSpan().SequenceEqual(t.Object.Export.Data) ? "identical" : "DIFFERENT")}");
+                foreach (var (name, row) in t.Rows.Where(r => a.Length < 2 || pkg.NameText(r.Name).Contains(a[1], StringComparison.OrdinalIgnoreCase)))
+                    Console.WriteLine($"{pkg.NameText(name)}: " + string.Join(", ", row.Select(p => $"{p.Name}:{p.Type}={Show(pkg, p)}")));
+                return 0;
+            }
             case "names" when a.Length == 1:
             {
                 var pkg = CookedPackage.Load(a[0]);
@@ -334,6 +347,18 @@ static class Cli
         }
         throw new ArgumentException("bad pkg command (modkit --help)");
     }
+
+    static string Show(CookedPackage pkg, ScumModKit.Properties.Property p) => p.Type switch
+    {
+        "IntProperty" => BitConverter.ToInt32(p.Value).ToString(),
+        "FloatProperty" => BitConverter.ToSingle(p.Value).ToString(System.Globalization.CultureInfo.InvariantCulture),
+        "BoolProperty" => p.Bool.ToString(),
+        "NameProperty" => pkg.NameText(p.NameValue),
+        "ObjectProperty" => pkg.ObjectPath(p.ObjectIndex),
+        "SoftObjectProperty" or "SoftClassProperty" => pkg.NameText(p.NameValue),
+        "TextProperty" => (ScumModKit.Text.TextValues.Source(p.Value) ?? "(text)") + (Environment.GetEnvironmentVariable("MODKIT_HEX") == "1" ? " " + Convert.ToHexString(p.Value) : ""),
+        _ => $"[{p.Value.Length} bytes]",
+    };
 
     // ------------------------------------------------------------------ reg
 

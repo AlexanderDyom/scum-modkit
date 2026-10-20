@@ -1,7 +1,42 @@
 # ScumModKit
 
-Our SCUM mod compiler: a .NET 8 library plus the `modkit` CLI. The goal is to build mod paks without ScumStudio.
-The plan is in [ARCHITECTURE.md](ARCHITECTURE.md). Done so far: slice 1, `modkit pack`.
+Our SCUM mod compiler: a .NET 8 library plus the `modkit` CLI. It builds mod paks without ScumStudio and without the
+mods' Python scripts. The recipe and crafting tools are meant to embed the library. The plan is in
+[ARCHITECTURE.md](ARCHITECTURE.md). Slices 1–4 are done: Food_Mod and Chest_Mod build with `modkit build` alone, and their
+paks match the ScumStudio + Python builds byte for byte.
+
+## Library map
+
+| namespace | what |
+|---|---|
+| `ScumModKit.Pak` | `PakWriter` (v11, as repak writes it), `PakIndex` (reader), `PakPriority` |
+| `ScumModKit.Registry` | `AssetRegistry` (v8 read/write), `RecordCloner` (registry records for clones) |
+| `ScumModKit.Package` | `CookedPackage` (.uasset/.uexp model, saves byte-identical), `PackageEdits` (names, imports, ingredient tags and slots) |
+| `ScumModKit.Properties` | `PropertyList` (tagged-property tree), `ExportProperties`, `DataTable` |
+| `ScumModKit.Text` | FText values (invariant, Base), `Locres` v3 writer, text hashes |
+| `ScumModKit.Clone` | `CloneRenamer`, `CloneGroup`: what a clone renames |
+| `ScumModKit.Build` | `GameSource` (encrypted game paks), `Stage`, `PackageCloner` (+ trader rows), `ModPacker`, `ModBuilder`, `ModProject` |
+| `ScumModKit.Build.Ops` | `CookingEdits` / `CookingConfig` (recipes, cookbooks, registry, known recipes), `EditList` (generic edits) |
+
+## `modkit build`
+
+`modkit build <modkit.json> [--stage <empty dir>] [--out <pak>]` runs these steps:
+
+1. clones from the game (name maps renamed, plus a trader row in `Economy/Table_TradeableDesc` for every cloned item
+   whose template has one);
+2. the `setAssetValue` texts of the ScumStudio journal;
+3. `include` files (cooked editor assets, `SCUM/Config/Tags`...);
+4. the `cooking` edits;
+5. the `edits` list;
+6. `pack`.
+
+Game packages that an edit needs are copied from the game into the stage on first use.
+
+Moving a mod over: `migrate/cooking_config_to_json.py` (recipe_edit.py configs) and `migrate/record_python_edits.py`.
+The second runs the mod's rename_names-based scripts with the calls recorded instead of done, and writes the "edits"
+list, including a `localize` edit from a texts module.
+
+Other commands: `modkit extract` (game files into a stage), `modkit clone`, `modkit pkg verify|names|table`.
 
 ```
 dotnet build tools/modkit/ScumModKit.Cli -c Release
@@ -61,6 +96,17 @@ their parents. It is never printed.
 ```
 
 ## Checked (2026-10-20)
+
+Slices 2–4:
+
+- `modkit extract` = `ss.sh pak unpack` (484 files);
+- `pkg verify`: 1001 packages (game, ScumStudio clones, Chest_Mod's cooked editor assets) re-save byte-identical, and
+  every name hash checks out;
+- clones + journal texts + trader rows = the full ScumStudio export, every file (Food_Mod 18, Chest_Mod 512);
+- `modkit build` of Food_Mod (cooking edits) and Chest_Mod (823 recorded edits + localization) = the ScumStudio +
+  Python builds, the whole pak byte for byte.
+
+Slice 1:
 
 | | Food_Mod (4, then 5 clones) | Chest_Mod (51 clones) |
 |---|---|---|

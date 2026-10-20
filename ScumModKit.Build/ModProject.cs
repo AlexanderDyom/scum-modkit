@@ -29,6 +29,8 @@ public sealed class ModProject
     public string? Journal { get; set; }
     /// <summary>Files or folders copied into the stage: from (relative to modkit.json) -> to (path in the pak).</summary>
     public List<IncludeSpec> Include { get; set; } = [];
+    /// <summary>Package edits applied after the clones, includes and cooking edits (see Ops/EditList.cs).</summary>
+    public List<JsonElement> Edits { get; set; } = [];
     /// <summary>Cooking recipe edits (recipes, cookbooks, registry, known by default, item texts).</summary>
     public CookingConfig? Cooking { get; set; }
 
@@ -47,6 +49,9 @@ public sealed class ModProject
     }
 
     public string? Resolve(string? relative) => relative == null ? null : Path.GetFullPath(Path.Combine(Folder, relative));
+
+    /// <summary>The journal's setAssetValue edits of Text values, as setText edits (empty without a journal).</summary>
+    public List<JsonElement> JournalEdits() => Journal == null ? [] : ScumStudioJournal.ReadTextEdits(Resolve(Journal)!);
 
     /// <summary>Clone groups of the project: its own clones, then the journal's (a later clone of the same primary wins).</summary>
     public List<CloneGroup> CloneGroups()
@@ -110,6 +115,31 @@ public sealed class PackagePair
 
 public static class ScumStudioJournal
 {
+    /// <summary>setAssetValue edits of top-level Text values as modkit setText edits; other value kinds are refused.</summary>
+    public static List<JsonElement> ReadTextEdits(string journal)
+    {
+        var edits = new List<JsonElement>();
+        foreach (var text in File.ReadLines(journal))
+        {
+            if (string.IsNullOrWhiteSpace(text)) continue;
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("type", out var type) || type.GetString() != "edit") continue;
+            var edit = root.GetProperty("edit");
+            if (edit.GetProperty("op").GetString() != "setAssetValue") continue;
+            var kind = edit.GetProperty("valueKind").GetString();
+            var path = edit.GetProperty("path").GetString()!;
+            if (kind != "Text" || path.Contains('.') || path.Contains('['))
+                throw new NotSupportedException($"setAssetValue {kind} {path}: only top-level Text values are supported.");
+            edits.Add(JsonSerializer.SerializeToElement(new Dictionary<string, string>
+            {
+                ["op"] = "setText", ["package"] = edit.GetProperty("package").GetString()!, ["export"] = edit.GetProperty("export").GetString()!,
+                ["property"] = path, ["text"] = edit.GetProperty("new").GetString()!,
+            }));
+        }
+        return edits;
+    }
+
     /// <summary>cloneAsset edits of a ScumStudio journal.jsonl, by new primary (a later edit of the same primary wins).</summary>
     public static List<CloneGroup> ReadClones(string journal)
     {

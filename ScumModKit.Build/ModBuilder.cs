@@ -1,4 +1,5 @@
-// modkit build: modkit.json -> stage (clones, included files, edits) -> pak + .sig + registry.
+// modkit build: modkit.json -> stage (clones, the journal's texts, included files, cooking edits, edits) -> pak + .sig
+// + registry.
 namespace ScumModKit.Build;
 
 public sealed class BuildOptions
@@ -34,6 +35,12 @@ public static class ModBuilder
                 var files = PackageCloner.CloneInto(game, groups, stageDir);
                 log($"clones: {groups.Count} ({files.Count} files)");
             }
+            var journalEdits = project.JournalEdits();
+            if (journalEdits.Count > 0)
+            {
+                Ops.EditList.Apply(stage, journalEdits);
+                log($"journal texts: {journalEdits.Count}");
+            }
             foreach (var inc in project.Include)
             {
                 var n = Include(project.Resolve(inc.From)!, Path.Combine(stageDir, inc.To));
@@ -43,6 +50,11 @@ public static class ModBuilder
             {
                 project.Cooking.Apply(stage);
                 log($"cooking: {project.Cooking.Recipes.Count} recipes edited");
+            }
+            if (project.Edits.Count > 0)
+            {
+                Ops.EditList.Apply(stage, project.Edits);
+                log($"edits: {project.Edits.Count}");
             }
         }
         if (o.NoPack) return (groups.Count, null);

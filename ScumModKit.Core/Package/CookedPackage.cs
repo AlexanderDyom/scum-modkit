@@ -86,11 +86,23 @@ public sealed class CookedPackage
         return [.. BitConverter.GetBytes(i), 0, 0, 0, 0];
     }
 
-    /// <summary>The export with this object name.</summary>
+    /// <summary>The export with this object name (with its number, e.g. X_0, or without it when that is unique).</summary>
     public ObjectExport Export(string objectName)
     {
         var hits = Exports.Where(e => NameText(e.ObjectName) == objectName).ToList();
+        if (hits.Count == 0) hits = Exports.Where(e => Names[e.ObjectName.Index].Text == objectName).ToList();
         return hits.Count == 1 ? hits[0] : throw new KeyNotFoundException($"{hits.Count} exports named {objectName}.");
+    }
+
+    /// <summary>
+    /// Sets NameCount of the summary's generations to the current name count, as ScumStudio does when it adds names
+    /// (rename_names.py-style edits leave it as it was).
+    /// </summary>
+    public void SyncGenerationNameCount()
+    {
+        var count = BinaryPrimitives.ReadInt32LittleEndian(_summary.AsSpan(_posGenerations));
+        for (var i = 0; i < count; i++)
+            BinaryPrimitives.WriteInt32LittleEndian(_summary.AsSpan(_posGenerations + 4 + (8 * i) + 4), Names.Count);
     }
 
     /// <summary>Number of SoftPackageReferences in the summary (cooked SCUM packages mostly have none).</summary>

@@ -1,8 +1,11 @@
 // Clones game packages under new names into a stage: the template's files from the game (.uasset/.uexp/.ubulk...),
-// the name map renamed with the clone group's renames (CloneRenamer), everything else unchanged — as ScumStudio's
-// cloneAsset does (checked byte for byte against its export).
+// the name map renamed with the clone group's renames (CloneRenamer), everything else unchanged; and a trader row
+// (Economy/Table_TradeableDesc) for every cloned item whose template has one — as ScumStudio's export does (checked
+// byte for byte against it).
 using ScumModKit.Clone;
 using ScumModKit.Package;
+using ScumModKit.Properties;
+using ScumModKit.Text;
 
 namespace ScumModKit.Build;
 
@@ -24,7 +27,49 @@ public static class PackageCloner
                     written.Add(path);
                 }
         }
+        var rows = AddTradeableRows(new Stage(stage, game), groups);
+        if (rows > 0) written.Add(GameSource.PakPath(TradeableTable) + ".uasset");
         return written;
+    }
+
+    public const string TradeableTable = "/Game/ConZ_Files/Economy/Table_TradeableDesc";
+
+    /// <summary>
+    /// Trader rows for clones: a copy of the template's row (key &lt;Template&gt;_C) at the end of the table, with key
+    /// &lt;New&gt;_C, TradeableClass = the clone's class and TradingEntryCaption = its name with spaces (culture-invariant).
+    /// Clones in the order of their new primary (ignoring case). Returns the number of rows added.
+    /// </summary>
+    public static int AddTradeableRows(Stage stage, IEnumerable<CloneGroup> groups)
+    {
+        var files = stage.Game!.Extract(TradeableTable);
+        byte[] File(string ext) => files.First(f => f.Path.EndsWith(ext, StringComparison.OrdinalIgnoreCase)).Data;
+        var stock = CookedPackage.Load(File(".uasset"), File(".uexp"));
+        var stockKeys = DataTable.Read(stock, stock.Exports[0]).Rows.Select(r => stock.NameText(r.Name)).ToHashSet(StringComparer.Ordinal);
+        var todo = groups.OrderBy(g => g.NewPrimary, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(g => g.Packages).Where(p => stockKeys.Contains(p.OldShort + "_C")).ToList();
+        if (todo.Count == 0) return 0;
+
+        var added = 0;
+        stage.Edit(TradeableTable, pkg =>
+        {
+            var t = DataTable.Read(pkg, pkg.Exports[0]);
+            var byKey = t.Rows.ToDictionary(r => pkg.NameText(r.Name), r => r.Row, StringComparer.Ordinal);
+            foreach (var p in todo)
+            {
+                var key = p.NewShort + "_C";
+                if (byKey.ContainsKey(key)) continue;
+                var row = byKey[p.OldShort + "_C"].Clone();
+                var keyName = new FName(pkg.AddName(key), 0);
+                row.Get("TradeableClass").NameValue = new FName(pkg.AddName($"{p.New}.{p.NewShort}_C"), 0);
+                if (row.Find("TradingEntryCaption") is { } caption) caption.Value = TextValues.Invariant(p.NewShort.Replace('_', ' '));
+                t.Rows.Add((keyName, row));
+                byKey[key] = row;
+                added++;
+            }
+            t.Save();
+            pkg.SyncGenerationNameCount();
+        });
+        return added;
     }
 
     /// <summary>The files of one cloned package: pak path -> bytes.</summary>
