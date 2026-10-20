@@ -87,5 +87,45 @@ public sealed class GameSource : IDisposable
                ?? throw new FileNotFoundException($"No .sig in {Paks}.");
     }
 
+    /// <summary>Path of a game package or folder in the paks: /Game/X -> SCUM/Content/X; SCUM/... stays as it is.</summary>
+    public static string PakPath(string path)
+    {
+        path = path.Replace('\\', '/').TrimEnd('/');
+        if (path.StartsWith("/Game/", StringComparison.OrdinalIgnoreCase)) return "SCUM/Content/" + path[6..];
+        if (path.Equals("/Game", StringComparison.OrdinalIgnoreCase)) return "SCUM/Content";
+        return path.TrimStart('/');
+    }
+
+    /// <summary>
+    /// Files of the game (as the game sees them: the highest-priority stock pak wins) for a package
+    /// (/Game/Folder/Name -> its .uasset, .uexp, .ubulk...) or every file under a folder (/Game/Folder or SCUM/...).
+    /// </summary>
+    public List<(string Path, byte[] Data)> Extract(string packageOrFolder)
+    {
+        var p = PakPath(packageOrFolder);
+        var stem = Path.GetExtension(p).Length > 0 ? p[..^Path.GetExtension(p).Length] : p;
+        var matches = _provider.Files.Values
+            .Where(f => f.Path.StartsWith(p + "/", StringComparison.OrdinalIgnoreCase) || f.Path.Equals(p, StringComparison.OrdinalIgnoreCase) ||
+                        (f.Path.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase) && f.Path.IndexOf('/', stem.Length) < 0))
+            .OrderBy(f => f.Path, StringComparer.Ordinal)
+            .ToList();
+        if (matches.Count == 0) throw new FileNotFoundException($"Nothing in the game's paks at {packageOrFolder}.");
+        return matches.Select(f => (f.Path, f.Read())).ToList();
+    }
+
+    /// <summary>Extracts into a stage folder (paths as in the pak); returns the files written.</summary>
+    public List<string> ExtractTo(string packageOrFolder, string stage)
+    {
+        var written = new List<string>();
+        foreach (var (path, data) in Extract(packageOrFolder))
+        {
+            var target = Path.Combine(stage, path);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.WriteAllBytes(target, data);
+            written.Add(path);
+        }
+        return written;
+    }
+
     public void Dispose() => _provider.Dispose();
 }

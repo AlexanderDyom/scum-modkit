@@ -37,6 +37,11 @@ static class Cli
               --data-order-from: write the file data in that pak's order. repak packs in parallel, so its data order
               varies between runs; with its order our pak is byte-identical to repak's (the index is always the same).
 
+          modkit extract <path>... --stage <dir> [--paks <SCUM folder or Paks>] [--key <key file>]
+              Copies game files into the stage folder, as the game sees them (from its encrypted stock paks):
+              a package (/Game/Folder/Name: .uasset, .uexp, .ubulk...) or every file under a folder (/Game/Folder,
+              SCUM/Content/Folder).
+
           modkit reg game <paks> <key file> <out.bin>   the game's own AssetRegistry.bin
           modkit reg hashes <AssetRegistry.bin>         check every name hash of the name batch (CityHash64)
           modkit reg diff <base.bin> <other.bin>        records of other that base lacks, with tags
@@ -50,6 +55,7 @@ static class Cli
         return args[0] switch
         {
             "pack" => Pack(args[1..]),
+            "extract" => Extract(args[1..]),
             "reg" when args.Length >= 2 => Reg(args[1], args[2..]),
             _ => throw new ArgumentException($"unknown command {args[0]} (modkit --help)"),
         };
@@ -112,7 +118,7 @@ static class Cli
         }
 
         paks ??= GameLocator.FindInstall(InstallKind.Client);
-        key ??= Environment.GetEnvironmentVariable("SCUM_AES_KEY_FILE") is { Length: > 0 } env ? env : FindKey(Environment.CurrentDirectory) ?? FindKey(stage);
+        key ??= KeyFile(stage);
 
         var r = ModPacker.Pack(new PackOptions
         {
@@ -129,6 +135,46 @@ static class Cli
         foreach (var w in r.Warnings) Console.WriteLine("warning: " + w);
         return 0;
     }
+
+    // ------------------------------------------------------------------ extract
+
+    static int Extract(string[] args)
+    {
+        string? stage = null, paks = null, key = null;
+        var paths = new List<string>();
+        for (var i = 0; i < args.Length; i++)
+        {
+            string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value");
+            switch (args[i])
+            {
+                case "--stage": stage = Next(); break;
+                case "--paks": paks = Next(); break;
+                case "--key": key = Next(); break;
+                default:
+                    if (args[i].StartsWith("--")) throw new ArgumentException($"unexpected argument {args[i]}");
+                    paths.Add(args[i]);
+                    break;
+            }
+        }
+        if (stage == null || paths.Count == 0) throw new ArgumentException("usage: modkit extract <path>... --stage <dir>");
+        using var game = OpenGame(paks, key, stage);
+        foreach (var p in paths)
+        {
+            var files = game.ExtractTo(p, stage);
+            Console.WriteLine($"{p}: {files.Count} files");
+        }
+        return 0;
+    }
+
+    static GameSource OpenGame(string? paks, string? key, string near)
+    {
+        paks ??= GameLocator.FindInstall(InstallKind.Client) ?? throw new ArgumentException("SCUM not found, use --paks");
+        key ??= KeyFile(near) ?? throw new ArgumentException("no AES key file (--key, SCUM_AES_KEY_FILE or key.txt)");
+        return GameSource.Open(paks, key);
+    }
+
+    static string? KeyFile(string near) =>
+        Environment.GetEnvironmentVariable("SCUM_AES_KEY_FILE") is { Length: > 0 } env ? env : FindKey(Environment.CurrentDirectory) ?? FindKey(near);
 
     /// <summary>key.txt in the folder or one of its parents.</summary>
     static string? FindKey(string folder)
