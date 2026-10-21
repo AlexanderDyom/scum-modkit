@@ -9,6 +9,9 @@ public sealed class Stage(string root, GameSource? game = null)
     public string Root { get; } = Path.GetFullPath(root);
     public GameSource? Game { get; } = game;
 
+    /// <summary>Asset registry tags to set when the mod's registry is built: (package, tag, value), in order.</summary>
+    public List<(string Package, string Tag, string Value)> RegistryTags { get; } = [];
+
     /// <summary>Path of a package's .uasset in the stage (/Game/X -> Root/SCUM/Content/X.uasset).</summary>
     public string UassetPath(string package) => Path.Combine(Root, GameSource.PakPath(package) + ".uasset");
 

@@ -7,6 +7,12 @@
 //   {"op": "addIngredientTag", "package": P, "tagPackage": T, "tag": N, "amount": 1.0}
 //   {"op": "setObject", "package": P, "export": E, "property": X, "value": 0}        ObjectProperty = package index
 //   {"op": "setText", "package": P, "export": E, "property": X, "text": S}           culture-invariant FText
+//   {"op": "setTags", "package": P, "export": E, "property": X, "tags": [...]}       GameplayTagContainer (path a.b);
+//        _itemSpawnTypes also sets the registry tag SpawnTypes of the package's records
+//   {"op": "setBool", "package": P, "export": E, "property": "a.b", "value": true}   added when not written yet
+//   {"op": "addLootNode", "table": T, "copy": N, "node": M, "rarity": "EItemRarity::Rare"?}
+//        a loot tree leaf: row M (ItemLootTreeNodes...<Item>) of the ILTN table T, a copy of row N, after it
+//   {"op": "setRegistryTag", "package": P, "tag": K, "value": V}   string value of a registry tag of P's records
 //   {"op": "localize", "namespace": NS, "entries": [{"package", "export", "property", "key", "source",
 //        "translations": {culture folder: text}}]}   Base FTexts + SCUM/Content/Localization/Game/<folder>/Game.locres
 using System.Text.Json;
@@ -81,6 +87,38 @@ public static class EditList
             case "setText":
                 stage.Edit(S("package"), pkg => SetTexts(pkg, S("export"), new() { [S("property")] = TextValues.Invariant(S("text")) }));
                 break;
+            case "setTags":
+            {
+                var tags = e.GetProperty("tags").EnumerateArray().Select(t => t.GetString()!).ToList();
+                var property = S("property");
+                stage.Edit(S("package"), pkg =>
+                {
+                    var ep = ExportProperties.Read(pkg, S("export"));
+                    var p = PropertyPath.Find(pkg, ep.Properties, property, out _)
+                            ?? throw new KeyNotFoundException($"{S("export")}: no {property}.");
+                    PropertyPath.WriteTags(pkg, p, tags);
+                    ep.Save();
+                });
+                if (property == "_itemSpawnTypes") stage.RegistryTags.Add((S("package"), "SpawnTypes", PropertyPath.RegistryText(tags)));
+                break;
+            }
+            case "setBool":
+                stage.Edit(S("package"), pkg =>
+                {
+                    var ep = ExportProperties.Read(pkg, S("export"));
+                    PropertyPath.SetBool(pkg, ep.Properties, S("property"), e.GetProperty("value").GetBoolean());
+                    ep.Save();
+                });
+                break;
+            case "addLootNode":
+            {
+                var rarity = e.TryGetProperty("rarity", out var r) ? r.GetString() : null;
+                stage.Edit(S("table"), pkg => AddLootNode(pkg, S("copy"), S("node"), rarity));
+                break;
+            }
+            case "setRegistryTag":
+                stage.RegistryTags.Add((S("package"), S("tag"), S("value")));
+                break;
             case "localize":
                 Localize(stage, S("namespace"), e.GetProperty("entries"));
                 break;
@@ -126,6 +164,29 @@ public static class EditList
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllBytes(path, Locres.WriteV3(ns, list.Select(x => new LocresEntry(x.Key, x.Source, x.Translations[culture])).ToList()));
         }
+    }
+
+    /// <summary>
+    /// A loot tree leaf in an ItemLootTreeNodes tag table (ILTN_*): a copy of the row <paramref name="copy"/> named
+    /// <paramref name="node"/> (its last part names the item), inserted after it; Rarity = rarity when given.
+    /// </summary>
+    public static void AddLootNode(CookedPackage pkg, string copy, string node, string? rarity)
+    {
+        var t = DataTable.Read(pkg, pkg.Exports[0]);
+        if (t.Rows.Any(x => pkg.NameText(x.Name) == node)) throw new InvalidOperationException($"{node} is in the table already.");
+        var at = t.Rows.FindIndex(x => pkg.NameText(x.Name) == copy);
+        if (at < 0) throw new KeyNotFoundException($"No row {copy}.");
+        var row = t.Rows[at].Row.Clone();
+        var key = new FName(pkg.AddName(node), 0);
+        row.Get("Tag").NameValue = key;
+        if (rarity != null)
+        {
+            var p = row.Get("Rarity");
+            if (p.Type != "EnumProperty" && p.Type != "ByteProperty") throw new InvalidOperationException($"Rarity is a {p.Type}.");
+            p.NameValue = new FName(pkg.AddName(rarity), 0);
+        }
+        t.Rows.Insert(at + 1, (key, row));
+        t.Save();
     }
 
     private static GameSource Game(Stage stage) => stage.Game ?? throw new InvalidOperationException("needs the game");

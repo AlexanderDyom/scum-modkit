@@ -31,6 +31,8 @@ public sealed class PackOptions
     public string? KeyFile { get; init; }
     /// <summary>The AES key itself (hex), instead of KeyFile.</summary>
     public string? Key { get; init; }
+    /// <summary>Asset registry tags to set on the records of a package: (package, tag, value); needs the registry built.</summary>
+    public IReadOnlyList<(string Package, string Tag, string Value)> RegistryTags { get; init; } = [];
     /// <summary>.sig copied next to the pak; null = a stock .sig of the game, "" = none.</summary>
     public string? Sig { get; init; }
     /// <summary>Also write the built registry here.</summary>
@@ -67,7 +69,9 @@ public static class ModPacker
         var files = StageFiles(stage);
         var stageHasRegistry = files.Any(f => f.Path.Equals(RegistryPath, StringComparison.OrdinalIgnoreCase));
 
-        var mode = o.Registry == RegistryMode.Auto ? (o.Clones.Count > 0 ? RegistryMode.Build : RegistryMode.Keep) : o.Registry;
+        var mode = o.Registry == RegistryMode.Auto
+            ? (o.Clones.Count > 0 || o.RegistryTags.Count > 0 ? RegistryMode.Build : RegistryMode.Keep)
+            : o.Registry;
         if (mode != RegistryMode.Keep) files.RemoveAll(f => f.Path.Equals(RegistryPath, StringComparison.OrdinalIgnoreCase));
 
         GameSource? game = null;
@@ -81,6 +85,9 @@ public static class ModPacker
                 result.GameRecords = reg.Assets.Count;
                 result.Clones = RecordCloner.AddClones(reg, o.Clones, pkg => ShipsPackage(files, pkg));
                 result.Warnings.AddRange(result.Clones.Warnings);
+                foreach (var (package, tag, value) in o.RegistryTags)
+                    if (RecordCloner.SetTag(reg, package, tag, value) == 0)
+                        result.Warnings.Add($"{package}: no registry record with the tag {tag}");
                 var bytes = reg.Save();
                 if (o.RegistryOut != null)
                 {

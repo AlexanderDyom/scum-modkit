@@ -61,6 +61,58 @@ public static class RecordCloner
         return report;
     }
 
+    /// <summary>
+    /// Sets the tag <paramref name="tag"/> of every record of <paramref name="package"/> that has it to a string value
+    /// (the record's tag map is copied to the end of the store first, so maps of other records stay as they are).
+    /// Returns the number of records changed.
+    /// </summary>
+    public static int SetTag(AssetRegistry reg, string package, string tag, string value)
+    {
+        var n = 0;
+        foreach (var a in reg.Assets.Where(a => reg.NameText(a.PackageName) == package))
+        {
+            var count = reg.TagCount(a.TagHandle);
+            var first = (int)(a.TagHandle & 0xFFFFFFFF);
+            var numberless = (a.TagHandle >> 63) != 0;
+            var keys = Enumerable.Range(first, count)
+                .Select(i => numberless ? reg.Names[(int)reg.NlPairs[i].Key] : reg.NameText(reg.Pairs[i].Key)).ToList();
+            var at = keys.IndexOf(tag);
+            if (at < 0) continue;
+
+            uint id;
+            if (value.All(c => c <= 0x7F))
+            {
+                var off = (uint)reg.AnsiChars.Length;
+                reg.AnsiChars.Write(Encoding.Latin1.GetBytes(value));
+                reg.AnsiChars.WriteByte(0);
+                reg.AnsiOffsets.Add(off);
+                id = ((uint)(reg.AnsiOffsets.Count - 1) << 3) | KAnsi;
+            }
+            else
+            {
+                var off = (uint)(reg.WideChars.Length / 2);
+                reg.WideChars.Write(Encoding.Unicode.GetBytes(value));
+                reg.WideChars.WriteByte(0); reg.WideChars.WriteByte(0);
+                reg.WideOffsets.Add(off);
+                id = ((uint)(reg.WideOffsets.Count - 1) << 3) | KWide;
+            }
+            if (numberless)
+            {
+                var start = reg.NlPairs.Count;
+                for (var k = 0; k < count; k++) reg.NlPairs.Add(k == at ? (reg.NlPairs[first + k].Key, id) : reg.NlPairs[first + k]);
+                a.TagHandle = (1UL << 63) | ((ulong)count << 32) | (uint)start;
+            }
+            else
+            {
+                var start = reg.Pairs.Count;
+                for (var k = 0; k < count; k++) reg.Pairs.Add(k == at ? (reg.Pairs[first + k].Key, id) : reg.Pairs[first + k]);
+                a.TagHandle = ((ulong)count << 32) | (uint)start;
+            }
+            n++;
+        }
+        return n;
+    }
+
     private static AssetRecord Clone(AssetRegistry reg, AssetRecord t, Func<string, string> rename, PackageRename p)
     {
         // tags first, then the record's names: the order ScumStudio interns new names in (same bytes as its registry)

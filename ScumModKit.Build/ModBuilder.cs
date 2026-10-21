@@ -30,6 +30,7 @@ public static class ModBuilder
         Directory.CreateDirectory(stageDir);
 
         var groups = project.CloneGroups();
+        var registryTags = new List<(string, string, string)>();
         using (var game = o.Key != null ? GameSource.OpenWithKey(o.Paks, o.Key)
                    : GameSource.Open(o.Paks, o.KeyFile ?? throw new ArgumentException("no AES key (KeyFile or Key)")))
         {
@@ -60,6 +61,7 @@ public static class ModBuilder
                 Ops.EditList.Apply(stage, project.Edits);
                 log($"edits: {project.Edits.Count}");
             }
+            registryTags.AddRange(stage.RegistryTags);
         }
         if (o.NoPack) return (groups.Count, null);
 
@@ -67,6 +69,7 @@ public static class ModBuilder
         var r = ModPacker.Pack(new PackOptions
         {
             Stage = stageDir, OutputPak = outPak, Clones = groups, Paks = o.Paks, KeyFile = o.KeyFile, Key = o.Key, DataOrderFrom = o.DataOrderFrom,
+            RegistryTags = registryTags,
         });
         return (groups.Count, r);
     }

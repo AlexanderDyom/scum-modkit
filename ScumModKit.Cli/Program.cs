@@ -59,6 +59,12 @@ static class Cli
               Clones the template packages of every clone from the game into the stage under their new names: the
               name map is renamed (paths and whole-word short names, also Default__X and X_C), the rest is copied.
 
+          modkit tags [<prefix>] [--json] [--paks ...] [--key ...]
+              Gameplay tags the game declares (SCUM/Config/DefaultGameplayTags.ini and the tag tables it lists, e.g.
+              the loot tree ILTN_*), with how many registry records use each (e.g. SpawnTypes of items).
+              ItemSpawnType.* = _itemSpawnTypes of items; ItemLootTreeNodes.* = loot tree nodes (their last part
+              names an item).
+
           modkit reg game <paks> <key file> <out.bin>   the game's own AssetRegistry.bin
           modkit reg hashes <AssetRegistry.bin>         check every name hash of the name batch (CityHash64)
           modkit reg diff <base.bin> <other.bin>        records of other that base lacks, with tags
@@ -75,6 +81,7 @@ static class Cli
             "build" => Build(args[1..]),
             "extract" => Extract(args[1..]),
             "clone" => Clone(args[1..]),
+            "tags" => Tags(args[1..]),
             "reg" when args.Length >= 2 => Reg(args[1], args[2..]),
             "pkg" when args.Length >= 2 => Pkg(args[1], args[2..]),
             _ => throw new ArgumentException($"unknown command {args[0]} (modkit --help)"),
@@ -234,6 +241,60 @@ static class Cli
         return ([.. groups.Values], stage, pakName);
     }
 
+    // ------------------------------------------------------------------ tags
+
+    static int Tags(string[] args)
+    {
+        string? prefix = null, paks = null, key = null;
+        var json = false;
+        for (var i = 0; i < args.Length; i++)
+        {
+            string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value");
+            switch (args[i])
+            {
+                case "--json": json = true; break;
+                case "--paks": paks = Next(); break;
+                case "--key": key = Next(); break;
+                default:
+                    if (args[i].StartsWith("--") || prefix != null) throw new ArgumentException($"unexpected argument {args[i]}");
+                    prefix = args[i];
+                    break;
+            }
+        }
+        using var game = OpenGame(paks, key, Environment.CurrentDirectory);
+        var tags = new SortedDictionary<string, string>(StringComparer.Ordinal); // tag -> where declared
+        var ini = System.Text.Encoding.UTF8.GetString(game.Extract("SCUM/Config/DefaultGameplayTags.ini")[0].Data);
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(ini, @"\+GameplayTagList=\(Tag=""([^""]+)"""))
+            tags.TryAdd(m.Groups[1].Value, "DefaultGameplayTags.ini");
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(ini, @"\+GameplayTagTableList=(\S+?)\.\S+"))
+        {
+            var files = game.Extract(m.Groups[1].Value);
+            byte[] F(string ext) => files.First(f => f.Path.EndsWith(ext, StringComparison.OrdinalIgnoreCase)).Data;
+            var pkg = CookedPackage.Load(F(".uasset"), F(".uexp"));
+            foreach (var (name, _) in DataTable.Read(pkg, pkg.Exports[0]).Rows)
+                tags.TryAdd(pkg.NameText(name), Path.GetFileName(m.Groups[1].Value));
+        }
+
+        // how many registry records mention each tag in a tag value
+        var reg = game.ReadRegistry();
+        var used = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var a in reg.Assets)
+            foreach (var (_, v) in reg.Tags(a.TagHandle))
+                if (v.Contains("TagName=\"", StringComparison.Ordinal))
+                    foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(v, "TagName=\"([^\"]+)\""))
+                        used[m.Groups[1].Value] = used.GetValueOrDefault(m.Groups[1].Value) + 1;
+
+        var list = tags.Where(t => prefix == null || t.Key.StartsWith(prefix, StringComparison.Ordinal))
+            .Select(t => (Tag: t.Key, Source: t.Value, Used: used.GetValueOrDefault(t.Key))).ToList();
+        if (json)
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(list.Select(t => new { tag = t.Tag, source = t.Source, used = t.Used }),
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        else
+            foreach (var t in list) Console.WriteLine($"{t.Tag}\t{t.Used}\t{t.Source}");
+        if (!json) Console.Error.WriteLine($"{list.Count} tags");
+        return 0;
+    }
+
     // ------------------------------------------------------------------ extract
 
     static int Extract(string[] args)
@@ -376,6 +437,9 @@ static class Cli
                 Console.WriteLine($"{indent}{p.Name}: array[{elems.Count}]");
                 for (var i = 0; i < elems.Count; i++) { Console.WriteLine($"{indent}  [{i}]"); Dump(pkg, elems[i], indent + "    "); }
             }
+            else if (p.Type == "StructProperty" && p.Header.Length >= 32 &&
+                     pkg.Names[BitConverter.ToInt32(p.Header, 24)].Text == "GameplayTagContainer")
+                Console.WriteLine($"{indent}{p.Name}: tags [{string.Join(", ", PropertyPath.ReadTags(pkg, p))}]");
             else Console.WriteLine($"{indent}{p.Name}: {p.Type} = {Show(pkg, p)}");
         }
     }
@@ -386,6 +450,7 @@ static class Cli
         "FloatProperty" => BitConverter.ToSingle(p.Value).ToString(System.Globalization.CultureInfo.InvariantCulture),
         "BoolProperty" => p.Bool.ToString(),
         "NameProperty" => pkg.NameText(p.NameValue),
+        "EnumProperty" or "ByteProperty" when p.Value.Length == 8 => pkg.NameText(p.NameValue),
         "ObjectProperty" => pkg.ObjectPath(p.ObjectIndex),
         "SoftObjectProperty" or "SoftClassProperty" => pkg.NameText(p.NameValue),
         "TextProperty" => (ScumModKit.Text.TextValues.Source(p.Value) ?? "(text)") + (Environment.GetEnvironmentVariable("MODKIT_HEX") == "1" ? " " + Convert.ToHexString(p.Value) : ""),

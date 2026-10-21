@@ -120,3 +120,19 @@ Slice 1:
 
 `modkit reg game|hashes|diff|compare|names|show` are tools for inspecting registries: read the game's own registry,
 check name hashes, list the records one registry adds, compare records and tags.
+
+## Item spawning (found 2026-10-21)
+
+- The world spawns items from the **loot tree**, not by `_itemSpawnTypes`. Spawner presets (`Items/SpawnerPresets2/...`)
+  name nodes `ItemLootTreeNodes.<Place>...`. The nodes are rows of tag tables `Data/Tables/Items/Spawning/Nodes/ILTN_*`
+  (listed in `SCUM/Config/DefaultGameplayTags.ini`), and a leaf's last part is the item's name
+  (`ItemLootTreeNodes.Kitchen.Items.Misc.Book_Cooking_BBQ`).
+  No spawner preset uses `ItemSpawnType.*` tags. Of the cookbooks, only Book_Cooking_BBQ is in the tree, so the
+  other books (and clones of them) never spawn in the world.
+- `addLootNode` adds a leaf for a cloned item (a copy of a sibling row, optionally with another rarity). Whether the
+  game then spawns it still has to be checked in game.
+- `setTags` on `_itemSpawnTypes` also updates the registry tag `SpawnTypes`, so the two stay the same. The registry
+  tag `Location` (a number) is not derived from `_itemLocation` in any simple way (parent class defaults), so `setBool`
+  on `_itemLocation` leaves it as it is.
+- `modkit tags [prefix]` lists the game's tags (`ItemSpawnType.`, `ItemLootTreeNodes.`...) with how many registry
+  records use each; `--json` for programs.
