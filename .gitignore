@@ -1,5 +1,21 @@
 bin/
 obj/
+publish/
+# build outputs and work folders
+build/
+stage/
+**/stage/
+*.pak
+*.sig
+*.utoc
+*.ucas
+# game files: never commit them
+*.uasset
+*.uexp
+*.ubulk
+*.umap
+*.locres
+AssetRegistry.bin
 # the AES key of the game paks: never commit it
 key.txt
 *.key

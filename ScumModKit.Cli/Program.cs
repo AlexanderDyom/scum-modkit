@@ -41,7 +41,7 @@ static class Cli
               (one group per option: the first pair is the primary asset).
               --registry auto: build when there are clones, else ship the stage's registry file as it is.
               --key: default env SCUM_AES_KEY_FILE, else key.txt in the current folder or the stage's, or their parents.
-              --paks: default the SCUM install found in the Steam libraries.
+              --paks: default env SCUM_GAME, else the SCUM install found in the Steam libraries.
               --data-order-from: write the file data in that pak's order. repak packs in parallel, so its data order
               varies between runs; with its order our pak is byte-identical to repak's (the index is always the same).
 
@@ -127,7 +127,7 @@ static class Cli
             outPak = Path.Combine(outDir ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(project!))!, "build"), pakName + ".pak");
         }
 
-        paks ??= GameLocator.FindInstall(InstallKind.Client);
+        paks ??= DefaultGame();
         key ??= KeyFile(stage);
 
         var r = ModPacker.Pack(new PackOptions
@@ -170,7 +170,7 @@ static class Cli
             }
         }
         if (project == null) throw new ArgumentException("usage: modkit build <modkit.json>");
-        paks ??= GameLocator.FindInstall(InstallKind.Client) ?? throw new ArgumentException("SCUM not found, use --paks");
+        paks ??= DefaultGame() ?? throw new ArgumentException("SCUM not found, use --paks");
         key ??= KeyFile(Path.GetDirectoryName(Path.GetFullPath(project))!) ?? throw new ArgumentException("no AES key file");
         var (_, r) = ModBuilder.Build(new BuildOptions
         {
@@ -327,13 +327,17 @@ static class Cli
 
     static GameSource OpenGame(string? paks, string? key, string near)
     {
-        paks ??= GameLocator.FindInstall(InstallKind.Client) ?? throw new ArgumentException("SCUM not found, use --paks");
+        paks ??= DefaultGame() ?? throw new ArgumentException("SCUM not found, use --paks");
         key ??= KeyFile(near) ?? throw new ArgumentException("no AES key file (--key, SCUM_AES_KEY_FILE or key.txt)");
         return GameSource.Open(paks, key);
     }
 
     static string? KeyFile(string near) =>
         Environment.GetEnvironmentVariable("SCUM_AES_KEY_FILE") is { Length: > 0 } env ? env : FindKey(Environment.CurrentDirectory) ?? FindKey(near);
+
+    /// <summary>The game folder: env SCUM_GAME, else the SCUM install found in the Steam libraries.</summary>
+    static string? DefaultGame() =>
+        Environment.GetEnvironmentVariable("SCUM_GAME") is { Length: > 0 } g ? g : GameLocator.FindInstall(InstallKind.Client);
 
     /// <summary>key.txt in the folder or one of its parents.</summary>
     static string? FindKey(string folder)
