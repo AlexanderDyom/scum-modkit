@@ -112,7 +112,7 @@ are documented at the top of `ScumModKit.Build/Ops/EditList.cs`.
 - **Several mods.** Every mod with new items ships a full asset registry, and only the highest-priority one counts.
   ScumRegistryMerger merges them.
 
-More design notes (in Russian): [ARCHITECTURE.md](ARCHITECTURE.md). Building and tests: [BUILDING.md](BUILDING.md).
+Building and tests: [BUILDING.md](BUILDING.md).
 
 ## Credits
 
