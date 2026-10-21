@@ -9,7 +9,10 @@ public sealed class BuildOptions
     public string? Stage { get; init; }
     public string? OutputPak { get; init; }
     public required string Paks { get; init; }
-    public required string KeyFile { get; init; }
+    /// <summary>File with the AES key; or give <see cref="Key"/> itself.</summary>
+    public string? KeyFile { get; init; }
+    /// <summary>The AES key itself (hex), instead of <see cref="KeyFile"/>.</summary>
+    public string? Key { get; init; }
     /// <summary>Only build the stage, no pak.</summary>
     public bool NoPack { get; init; }
     public string? DataOrderFrom { get; init; }
@@ -27,7 +30,8 @@ public static class ModBuilder
         Directory.CreateDirectory(stageDir);
 
         var groups = project.CloneGroups();
-        using (var game = GameSource.Open(o.Paks, o.KeyFile))
+        using (var game = o.Key != null ? GameSource.OpenWithKey(o.Paks, o.Key)
+                   : GameSource.Open(o.Paks, o.KeyFile ?? throw new ArgumentException("no AES key (KeyFile or Key)")))
         {
             var stage = new Stage(stageDir, game);
             if (groups.Count > 0)
@@ -62,7 +66,7 @@ public static class ModBuilder
         var outPak = o.OutputPak ?? Path.Combine(project.Folder, "build", (project.Pak ?? throw new ArgumentException("no \"pak\" name in the project")) + ".pak");
         var r = ModPacker.Pack(new PackOptions
         {
-            Stage = stageDir, OutputPak = outPak, Clones = groups, Paks = o.Paks, KeyFile = o.KeyFile, DataOrderFrom = o.DataOrderFrom,
+            Stage = stageDir, OutputPak = outPak, Clones = groups, Paks = o.Paks, KeyFile = o.KeyFile, Key = o.Key, DataOrderFrom = o.DataOrderFrom,
         });
         return (groups.Count, r);
     }

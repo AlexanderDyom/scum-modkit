@@ -30,11 +30,14 @@ public sealed class GameSource : IDisposable
     /// Mounts the stock paks of <paramref name="paks"/> (the folder itself, not ~mods) with the key from
     /// <paramref name="keyFile"/> (first line, hex, optional 0x).
     /// </summary>
-    public static GameSource Open(string paks, string keyFile)
+    public static GameSource Open(string paks, string keyFile) =>
+        OpenWithKey(paks, File.ReadLines(keyFile).FirstOrDefault() ?? throw new FormatException($"{keyFile} holds no AES key."));
+
+    /// <summary>Same with the key itself (hex, optional 0x), e.g. kept encrypted by a program; it is never printed.</summary>
+    public static GameSource OpenWithKey(string paks, string aesKey)
     {
         paks = GameLocator.ResolvePaks(paks) ?? throw new DirectoryNotFoundException($"No SCUM Paks folder at {paks}.");
-        var key = NormalizeKey(File.ReadLines(keyFile).FirstOrDefault())
-                  ?? throw new FormatException($"{keyFile} holds no AES key.");
+        var key = NormalizeKey(aesKey) ?? throw new FormatException("The AES key is empty.");
         var provider = new DefaultFileProvider(paks, SearchOption.TopDirectoryOnly, new VersionContainer(EGame.GAME_UE4_27), StringComparer.OrdinalIgnoreCase);
         try
         {

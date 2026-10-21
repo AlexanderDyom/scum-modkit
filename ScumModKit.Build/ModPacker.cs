@@ -29,6 +29,8 @@ public sealed class PackOptions
     public string? Paks { get; init; }
     /// <summary>File with the AES key of the game's paks (needed to build the registry).</summary>
     public string? KeyFile { get; init; }
+    /// <summary>The AES key itself (hex), instead of KeyFile.</summary>
+    public string? Key { get; init; }
     /// <summary>.sig copied next to the pak; null = a stock .sig of the game, "" = none.</summary>
     public string? Sig { get; init; }
     /// <summary>Also write the built registry here.</summary>
@@ -73,8 +75,8 @@ public static class ModPacker
         {
             if (mode == RegistryMode.Build)
             {
-                if (o.Paks == null || o.KeyFile == null) throw new ArgumentException("Building the registry needs the game's Paks folder and the AES key file.");
-                game = GameSource.Open(o.Paks, o.KeyFile);
+                if (o.Paks == null || (o.KeyFile == null && o.Key == null)) throw new ArgumentException("Building the registry needs the game's Paks folder and the AES key.");
+                game = o.Key != null ? GameSource.OpenWithKey(o.Paks, o.Key) : GameSource.Open(o.Paks, o.KeyFile!);
                 var reg = game.ReadRegistry();
                 result.GameRecords = reg.Assets.Count;
                 result.Clones = RecordCloner.AddClones(reg, o.Clones, pkg => ShipsPackage(files, pkg));
