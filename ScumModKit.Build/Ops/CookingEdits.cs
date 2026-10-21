@@ -292,11 +292,28 @@ public static class CookingEdits
     public static void AddKnownByDefault(CookedPackage pkg, IReadOnlyList<string> recipes) =>
         AppendAssetIds(pkg, "CookingSkill", "_recipesKnownByDefault", recipes, false);
 
+    /// <summary>
+    /// Array&lt;PrimaryAssetId&gt; prop += recipes (copies of element 0 with another PrimaryAssetName); replace = exactly
+    /// these. An empty list (replace) drops the property, as the cooker writes an empty array (the default); a missing
+    /// array is created.
+    /// </summary>
     private static void AppendAssetIds(CookedPackage pkg, string export, string prop, IReadOnlyList<string> recipes, bool replace)
     {
         PackageEdits.RenameNames(pkg, add: recipes, optional: true);
         var ep = ExportProperties.Read(pkg, export);
-        var arr = ep.Properties.Get(prop).OpenArray(pkg);
+        var p = ep.Properties.Find(prop);
+        if (recipes.Count == 0)
+        {
+            if (replace && p != null)
+            {
+                ep.Properties.Remove(p);
+                ep.Save();
+            }
+            return;
+        }
+        if (p == null) ep.Properties.Add(p = Property.NewStructArray(pkg, prop, "PrimaryAssetId", []));
+        var arr = p.OpenArray(pkg);
+        if (arr.Elements.Count == 0) arr.Elements.Add(NewAssetId(pkg, "CookingRecipe", recipes[0]));
         if (replace)
         {
             var tpl = arr.Elements[0];
@@ -312,6 +329,18 @@ public static class CookingEdits
             arr.Elements.Add(e);
         }
         ep.Save();
+    }
+
+    /// <summary>{PrimaryAssetType: {Name: type}, PrimaryAssetName: name}</summary>
+    private static PropertyList NewAssetId(CookedPackage pkg, string type, string name)
+    {
+        FName N(string s) => new(pkg.AddName(s), 0);
+        byte[] V(FName n) => [.. BitConverter.GetBytes(n.Index), .. BitConverter.GetBytes(n.Number)];
+        return
+        [
+            Property.NewStruct(pkg, "PrimaryAssetType", "PrimaryAssetType", [Property.Simple(pkg, "Name", "NameProperty", V(N(type)))]),
+            Property.Simple(pkg, "PrimaryAssetName", "NameProperty", V(N(name))),
+        ];
     }
 
     /// <summary>CookingRecipeRegistry._entries += {Enabled: true, AssetId: CookingRecipe:&lt;recipe&gt;} for new recipes.</summary>

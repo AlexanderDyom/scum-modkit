@@ -454,6 +454,7 @@ static class Cli
         "ObjectProperty" => pkg.ObjectPath(p.ObjectIndex),
         "SoftObjectProperty" or "SoftClassProperty" => pkg.NameText(p.NameValue),
         "TextProperty" => (ScumModKit.Text.TextValues.Source(p.Value) ?? "(text)") + (Environment.GetEnvironmentVariable("MODKIT_HEX") == "1" ? " " + Convert.ToHexString(p.Value) : ""),
+        "ArrayProperty" or "SetProperty" => $"[{p.Value.Length} bytes, of {pkg.Names[BitConverter.ToInt32(p.Header, 24)].Text}]",
         _ => $"[{p.Value.Length} bytes]",
     };
 

@@ -109,6 +109,30 @@ public sealed class Property
         return [.. header, .. value];
     }
 
+    /// <summary>A new StructProperty of tagged properties (StructName, zero struct guid, no property guid).</summary>
+    public static Property NewStruct(CookedPackage pkg, string name, string structName, PropertyList value)
+    {
+        var h = new byte[49];
+        BinaryPrimitives.WriteInt32LittleEndian(h, pkg.AddName(name));
+        BinaryPrimitives.WriteInt32LittleEndian(h.AsSpan(8), pkg.AddName("StructProperty"));
+        BinaryPrimitives.WriteInt32LittleEndian(h.AsSpan(24), pkg.AddName(structName));
+        return new Property { Header = h, Name = name, Type = "StructProperty", Struct = value };
+    }
+
+    /// <summary>A new ArrayProperty of tagged structs (inner tag: StructProperty of structName).</summary>
+    public static Property NewStructArray(CookedPackage pkg, string name, string structName, List<PropertyList> elements)
+    {
+        var h = new byte[33];
+        BinaryPrimitives.WriteInt32LittleEndian(h, pkg.AddName(name));
+        BinaryPrimitives.WriteInt32LittleEndian(h.AsSpan(8), pkg.AddName("ArrayProperty"));
+        BinaryPrimitives.WriteInt32LittleEndian(h.AsSpan(24), pkg.AddName("StructProperty"));
+        var inner = new byte[49];
+        BinaryPrimitives.WriteInt32LittleEndian(inner, pkg.AddName(name));
+        BinaryPrimitives.WriteInt32LittleEndian(inner.AsSpan(8), pkg.AddName("StructProperty"));
+        BinaryPrimitives.WriteInt32LittleEndian(inner.AsSpan(24), pkg.AddName(structName));
+        return new Property { Header = h, Name = name, Type = "ArrayProperty", Array = new PropertyArray { Inner = inner, Elements = elements } };
+    }
+
     /// <summary>A new tag (no type data, no guid) for simple types such as Float/Int/ObjectProperty.</summary>
     public static Property Simple(CookedPackage pkg, string name, string type, byte[] value)
     {
