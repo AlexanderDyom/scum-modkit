@@ -1,2 +1,5 @@
 bin/
 obj/
+# the AES key of the game paks: never commit it
+key.txt
+*.key
