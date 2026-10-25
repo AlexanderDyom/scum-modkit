@@ -86,10 +86,15 @@ public sealed class CookedPackage
         return [.. BitConverter.GetBytes(i), 0, 0, 0, 0];
     }
 
-    /// <summary>The export with this object name (with its number, e.g. X_0, or without it when that is unique).</summary>
+    /// <summary>
+    /// The export with this object name (with its number, e.g. X_0, or without it when that is unique), or with this
+    /// path inside the package (Default__X_C.ItemMesh0).
+    /// </summary>
     public ObjectExport Export(string objectName)
     {
         var hits = Exports.Where(e => NameText(e.ObjectName) == objectName).ToList();
+        if (hits.Count == 0 && objectName.Contains('.'))
+            hits = Exports.Where((e, i) => ObjectPath(i + 1) == objectName).ToList();
         if (hits.Count == 0) hits = Exports.Where(e => Names[e.ObjectName.Index].Text == objectName).ToList();
         return hits.Count == 1 ? hits[0] : throw new KeyNotFoundException($"{hits.Count} exports named {objectName}.");
     }

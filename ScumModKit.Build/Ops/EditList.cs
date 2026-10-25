@@ -13,6 +13,9 @@
 //   {"op": "addLootNode", "table": T, "copy": N, "node": M, "rarity": "EItemRarity::Rare"?}
 //        a loot tree leaf: row M (ItemLootTreeNodes...<Item>) of the ILTN table T, a copy of row N, after it
 //   {"op": "setRegistryTag", "package": P, "tag": K, "value": V}   string value of a registry tag of P's records
+//   {"op": "copyProperties", "package": P, "export": E, "from": Q, "fromExport": E2?, "properties": [...]}
+//        the values of the game package Q's export E2 (default E) into P's export E: a property Q has is set (added
+//        when P lacks it), one Q lacks is removed; names and imports the values need are added to P
 //   {"op": "localize", "namespace": NS, "entries": [{"package", "export", "property", "key", "source",
 //        "translations": {culture folder: text}}]}   Base FTexts + SCUM/Content/Localization/Game/<folder>/Game.locres
 using System.Text.Json;
@@ -116,6 +119,19 @@ public static class EditList
                 stage.Edit(S("table"), pkg => AddLootNode(pkg, S("copy"), S("node"), rarity));
                 break;
             }
+            case "copyProperties":
+            {
+                var from = S("from");
+                var export = S("export");
+                var fromExport = e.TryGetProperty("fromExport", out var fe) ? fe.GetString()! : export;
+                var names = e.GetProperty("properties").EnumerateArray().Select(x => x.GetString()!).ToList();
+                var files = Game(stage).Extract(from).Where(f => Stem(f.Path).Equals(GameSource.PakPath(from), StringComparison.OrdinalIgnoreCase)).ToList();
+                byte[] F(string ext) => files.FirstOrDefault(f => f.Path.EndsWith(ext, StringComparison.OrdinalIgnoreCase)).Data
+                                        ?? throw new FileNotFoundException($"{from}: no {ext} in the game.");
+                var src = CookedPackage.Load(F(".uasset"), F(".uexp"));
+                stage.Edit(S("package"), pkg => CopyProperties(src, fromExport, pkg, export, names));
+                break;
+            }
             case "setRegistryTag":
                 stage.RegistryTags.Add((S("package"), S("tag"), S("value")));
                 break;
@@ -164,6 +180,32 @@ public static class EditList
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllBytes(path, Locres.WriteV3(ns, list.Select(x => new LocresEntry(x.Key, x.Source, x.Translations[culture])).ToList()));
         }
+    }
+
+    /// <summary>
+    /// Copies properties of <paramref name="srcExport"/> of <paramref name="src"/> into <paramref name="export"/> of
+    /// <paramref name="pkg"/>: set when the source has it (added at the end when the target lacks it), removed when the
+    /// source does not have it (it keeps its default there).
+    /// </summary>
+    public static void CopyProperties(CookedPackage src, string srcExport, CookedPackage pkg, string export, IReadOnlyList<string> names)
+    {
+        var from = ExportProperties.Read(src, srcExport);
+        var to = ExportProperties.Read(pkg, export);
+        var copier = new PropertyCopier(src, pkg);
+        foreach (var name in names)
+        {
+            var s = from.Properties.Find(name);
+            var at = to.Properties.FindIndex(p => p.Name == name);
+            if (s == null)
+            {
+                if (at >= 0) to.Properties.RemoveAt(at);
+                continue;
+            }
+            var c = copier.Copy(s);
+            if (at >= 0) to.Properties[at] = c;
+            else to.Properties.Add(c);
+        }
+        to.Save();
     }
 
     /// <summary>

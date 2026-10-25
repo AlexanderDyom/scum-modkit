@@ -84,7 +84,8 @@ variant names its game resource class, and `""` as the item means any container.
 The full list with arguments is in `ScumModKit.Build/Ops/CookingEdits.cs` (`ParseOp`).
 
 Package edits (`edits`): `extract`, `copyPackage`, `rename`, `addIngredientSlot`, `setSlotAmount`,
-`addIngredientTag`, `setObject`, `setText`, `localize`, `setTags`, `setBool`, `addLootNode`, `setRegistryTag`. They
+`addIngredientTag`, `setObject`, `setText`, `localize`, `setTags`, `setBool`, `addLootNode`, `setRegistryTag`,
+`copyProperties` (values of a game package's export, e.g. a dish model or the look in the cookware; imports added). They
 are documented at the top of `ScumModKit.Build/Ops/EditList.cs`.
 
 ## Commands
