@@ -16,6 +16,11 @@ public sealed class BuildOptions
     /// <summary>Only build the stage, no pak.</summary>
     public bool NoPack { get; init; }
     public string? DataOrderFrom { get; init; }
+    /// <summary>
+    /// Stop the build when a food resource of the stage is over the composition limit (see NutritionCheck); by default
+    /// it is a warning.
+    /// </summary>
+    public bool StrictNutrition { get; init; }
 }
 
 public static class ModBuilder
@@ -31,6 +36,7 @@ public static class ModBuilder
 
         var groups = project.CloneGroups();
         var registryTags = new List<(string, string, string)>();
+        var nutritionWarnings = new List<string>();
         using (var game = o.Key != null ? GameSource.OpenWithKey(o.Paks, o.Key)
                    : GameSource.Open(o.Paks, o.KeyFile ?? throw new ArgumentException("no AES key (KeyFile or Key)")))
         {
@@ -62,6 +68,14 @@ public static class ModBuilder
                 log($"edits: {project.Edits.Count}");
             }
             registryTags.AddRange(stage.RegistryTags);
+            foreach (var m in Ops.NutritionCheck.OverLimit(stageDir))
+            {
+                var text = $"{m.Package} ({m.Export}): {m.Grams:0.##} g per 100 g (Water + Alcohol + TotalCarbohydrate + TotalFat + Protein) " +
+                           $"is over {Ops.NutritionCheck.Limit} g: the food cannot be eaten in game";
+                if (o.StrictNutrition) throw new InvalidOperationException(text);
+                nutritionWarnings.Add(text);
+                log("warning: " + text);
+            }
         }
         if (o.NoPack) return (groups.Count, null);
 
@@ -71,6 +85,7 @@ public static class ModBuilder
             Stage = stageDir, OutputPak = outPak, Clones = groups, Paks = o.Paks, KeyFile = o.KeyFile, Key = o.Key, DataOrderFrom = o.DataOrderFrom,
             RegistryTags = registryTags,
         });
+        r.Warnings.InsertRange(0, nutritionWarnings);
         return (groups.Count, r);
     }
 

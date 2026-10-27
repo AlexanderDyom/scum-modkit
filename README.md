@@ -85,7 +85,9 @@ The full list with arguments is in `ScumModKit.Build/Ops/CookingEdits.cs` (`Pars
 
 Package edits (`edits`): `extract`, `copyPackage`, `rename`, `addIngredientSlot`, `setSlotAmount`,
 `addIngredientTag`, `setObject`, `setText`, `localize`, `setTags`, `setBool`, `addLootNode`, `setRegistryTag`,
-`copyProperties` (values of a game package's export, e.g. a dish model or the look in the cookware; imports added). They
+`copyProperties` (values of a game package's export, e.g. a dish model or the look in the cookware; imports added),
+`setNumber` (a number in any export, added when not written), `setSubstances` (a food resource's foreign substances).
+They
 are documented at the top of `ScumModKit.Build/Ops/EditList.cs`.
 
 ## Commands
@@ -108,6 +110,19 @@ are documented at the top of `ScumModKit.Build/Ops/EditList.cs`.
   the tag tables `Data/Tables/Items/Spawning/Nodes/ILTN_*`. A leaf's last part is an item name. A cloned item only
   spawns in the world when a leaf names it (`addLootNode`); its `_itemSpawnTypes` tags are not used by any spawner
   preset.
+- **Nutrition of a dish.** A cooked dish takes its nutrition and substances from the ingredients it was cooked from (×
+  each variant's `NutrientInclusionFactor`); the dish's food resource (`GameResources/Food/Solids/CookedDishes/BP_Dish_X`,
+  numbers in its export `GameResourceConsumptionData_0`) counts only for a spawned or found dish. A new dish gets its own
+  resource when `BP_Dish_X` is cloned in the same clone group as `Dish_X` (the dish's references follow the clone).
+  Food whose composition (Water + Alcohol + TotalCarbohydrate + TotalFat + Protein, g per 100 g) is far over 100 g
+  cannot be eaten; `modkit build` warns above 100.5 g (stock food reaches 100.32 g), `--strict-nutrition` makes it an
+  error, `modkit pkg nutrition` lists the composition.
+- **A cooked dish with its own effects** (checked in game): a cooked dish (`CookedFoodItem`) never has its own
+  substances, and a recipe has no field for them. Let the recipe's result be a plain food item instead: clone e.g.
+  `Items/Food/Fruit/Apple` (+ `_ES`, + its resource `GameResources/Food/Solids/Apple` in the same clone group), give it
+  the dish's look (`rename` meshes and hand poses, `copyProperties` from the dish and its `_ES`), its numbers
+  (`copyProperties` from the dish's resource, `setNumber`, `setSubstances`) and point the recipe at it (`["result", ...]`).
+  `AccumulatedFatigueBonus` on the item's CDO is for the whole item and is split between its portions.
 - **Recipe lists.** A new recipe shows up only through a cookbook or the known-by-default list, and it needs an entry
   in the recipe registry (`newRecipes`).
 - **Several mods.** Every mod with new items ships a full asset registry, and only the highest-priority one counts.

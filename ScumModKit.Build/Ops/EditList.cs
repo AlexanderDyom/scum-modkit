@@ -13,6 +13,12 @@
 //   {"op": "addLootNode", "table": T, "copy": N, "node": M, "rarity": "EItemRarity::Rare"?}
 //        a loot tree leaf: row M (ItemLootTreeNodes...<Item>) of the ILTN table T, a copy of row N, after it
 //   {"op": "setRegistryTag", "package": P, "tag": K, "value": V}   string value of a registry tag of P's records
+//   {"op": "setNumber", "package": P, "export": E, "property": "a.b", "value": 1.5, "type": "Float"?}
+//        a number in the property's own type (Float/Double/Int/Int64/Byte); a property that is not written yet is added
+//        with "type" (Float, Double, Int or Int64; default Float)
+//   {"op": "setSubstances", "package": P, "export": E, "property": "ForeignSubstances"?,
+//        "substances": [{"class": "/Game/.../Caffeine_FS.Caffeine_FS_C", "amount": 0.1}]}
+//        the whole Array<{Class, Amount}> of a food resource's consumption data (classes imported); [] removes it
 //   {"op": "copyProperties", "package": P, "export": E, "from": Q, "fromExport": E2?, "properties": [...]}
 //        the values of the game package Q's export E2 (default E) into P's export E: a property Q has is set (added
 //        when P lacks it), one Q lacks is removed; names and imports the values need are added to P
@@ -119,6 +125,31 @@ public static class EditList
                 stage.Edit(S("table"), pkg => AddLootNode(pkg, S("copy"), S("node"), rarity));
                 break;
             }
+            case "setNumber":
+            {
+                var value = e.GetProperty("value").GetDouble();
+                var type = e.TryGetProperty("type", out var t) ? t.GetString()! : "Float";
+                stage.Edit(S("package"), pkg =>
+                {
+                    var ep = ExportProperties.Read(pkg, S("export"));
+                    SetNumber(pkg, ep.Properties, S("property"), value, type);
+                    ep.Save();
+                });
+                break;
+            }
+            case "setSubstances":
+            {
+                var list = e.GetProperty("substances").EnumerateArray()
+                    .Select(x => (Class: x.GetProperty("class").GetString()!, Amount: x.GetProperty("amount").GetSingle())).ToList();
+                var property = e.TryGetProperty("property", out var pr) ? pr.GetString()! : "ForeignSubstances";
+                stage.Edit(S("package"), pkg =>
+                {
+                    var ep = ExportProperties.Read(pkg, S("export"));
+                    SetSubstances(pkg, ep.Properties, property, list);
+                    ep.Save();
+                });
+                break;
+            }
             case "copyProperties":
             {
                 var from = S("from");
@@ -180,6 +211,63 @@ public static class EditList
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllBytes(path, Locres.WriteV3(ns, list.Select(x => new LocresEntry(x.Key, x.Source, x.Translations[culture])).ToList()));
         }
+    }
+
+    /// <summary>
+    /// A number at <paramref name="path"/>, written in the property's own type; a missing property is added with
+    /// <paramref name="addAs"/> (Float, Double, Int, Int64).
+    /// </summary>
+    public static void SetNumber(CookedPackage pkg, PropertyList props, string path, double value, string addAs = "Float")
+    {
+        var p = PropertyPath.Find(pkg, props, path, out var parent);
+        if (p == null)
+        {
+            var type = addAs.EndsWith("Property", StringComparison.Ordinal) ? addAs : addAs + "Property";
+            p = Property.Simple(pkg, path.Split('.')[^1], type, type switch
+            {
+                "FloatProperty" or "IntProperty" => new byte[4],
+                "DoubleProperty" or "Int64Property" => new byte[8],
+                _ => throw new ArgumentException($"setNumber: cannot add a {type} (Float, Double, Int or Int64)."),
+            });
+            parent.Add(p);
+        }
+        bool Whole() => Math.Abs(value - Math.Round(value)) < 1e-9 ? true : throw new ArgumentException($"{path} is a {p.Type}: {value} is not a whole number.");
+        p.Value = p.Type switch
+        {
+            "FloatProperty" => BitConverter.GetBytes((float)value),
+            "DoubleProperty" => BitConverter.GetBytes(value),
+            "IntProperty" when Whole() => BitConverter.GetBytes(checked((int)Math.Round(value))),
+            "Int64Property" when Whole() => BitConverter.GetBytes(checked((long)Math.Round(value))),
+            "ByteProperty" when p.Value.Length == 1 && Whole() => [checked((byte)Math.Round(value))],
+            _ => throw new InvalidOperationException($"{path} is a {p.Type}, not a number."),
+        };
+    }
+
+    /// <summary>
+    /// Replaces a food resource's Array&lt;GameResourceConsumptionDataForeignSubstance&gt; {Class, Amount}: each class
+    /// (/Game/.../X_FS.X_FS_C) is imported; an empty list removes the property (the default: no substances).
+    /// </summary>
+    public static void SetSubstances(CookedPackage pkg, PropertyList props, string property, IReadOnlyList<(string Class, float Amount)> list)
+    {
+        var at = props.FindIndex(p => p.Name == property);
+        if (list.Count == 0)
+        {
+            if (at >= 0) props.RemoveAt(at);
+            return;
+        }
+        var elements = list.Select(s =>
+        {
+            var dot = s.Class.LastIndexOf('.');
+            if (dot < 0 || !s.Class.StartsWith('/')) throw new FormatException($"Substance class {s.Class}: expected /Game/Folder/X_FS.X_FS_C.");
+            var import = PackageEdits.AddImport(pkg, s.Class[..dot], s.Class[(dot + 1)..], "/Script/Engine", "BlueprintGeneratedClass");
+            return new PropertyList
+            {
+                Property.Simple(pkg, "Class", "ObjectProperty", BitConverter.GetBytes(import)),
+                Property.Simple(pkg, "Amount", "FloatProperty", BitConverter.GetBytes(s.Amount)),
+            };
+        }).ToList();
+        if (at >= 0) props[at].OpenArray(pkg).Elements = elements;
+        else props.Add(Property.NewStructArray(pkg, property, "GameResourceConsumptionDataForeignSubstance", elements));
     }
 
     /// <summary>

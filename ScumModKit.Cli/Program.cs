@@ -26,7 +26,7 @@ static class Cli
 
         Usage:
           modkit build <modkit.json> [--stage <empty dir>] [--out <file.pak>] [--no-pack] [--paks ...] [--key ...]
-                       [--data-order-from <pak>]
+                       [--data-order-from <pak>] [--strict-nutrition]
               Builds the whole mod: clones from the game, "include" files, "cooking" edits, then pack (pak + .sig +
               registry). The stage must be empty (default: the project's "stage").
 
@@ -53,6 +53,7 @@ static class Cli
           modkit pkg verify <file.uasset|dir>          load + save every package, compare byte for byte, check name hashes
           modkit pkg names <file.uasset>               name map, imports and exports
           modkit pkg props <file.uasset> <export>      tagged properties as a tree (arrays of structs, structs opened)
+          modkit pkg nutrition <file.uasset|dir>       composition of food resources, g per 100 g (far over 100: not edible)
           modkit pkg table <file.uasset> [text]        DataTable rows (names containing text)
 
           modkit clone [<modkit.json>] [--stage <dir>] [--journal <journal.jsonl>] [--clone ...]... [--paks ...] [--key ...]
@@ -152,6 +153,7 @@ static class Cli
     {
         string? project = null, stage = null, outPak = null, paks = null, key = null, orderFrom = null;
         var noPack = false;
+        var strictNutrition = false;
         for (var i = 0; i < args.Length; i++)
         {
             string Next() => i + 1 < args.Length ? args[++i] : throw new ArgumentException($"{args[i]} needs a value");
@@ -162,6 +164,7 @@ static class Cli
                 case "--paks": paks = Next(); break;
                 case "--key": key = Next(); break;
                 case "--no-pack": noPack = true; break;
+                case "--strict-nutrition": strictNutrition = true; break;
                 case "--data-order-from": orderFrom = Next(); break;
                 default:
                     if (args[i].StartsWith('-') || project != null) throw new ArgumentException($"unexpected argument {args[i]}");
@@ -175,6 +178,7 @@ static class Cli
         var (_, r) = ModBuilder.Build(new BuildOptions
         {
             Project = project, Stage = stage, OutputPak = outPak, Paks = paks, KeyFile = key, NoPack = noPack, DataOrderFrom = orderFrom,
+            StrictNutrition = strictNutrition,
         }, Console.WriteLine);
         if (r != null)
         {
@@ -389,6 +393,20 @@ static class Cli
                 var ep = ExportProperties.Read(pkg, a[1]);
                 Dump(pkg, ep.Properties, "");
                 if (ep.Tail.Length > 0) Console.WriteLine($"(+ {ep.Tail.Length} native bytes)");
+                return 0;
+            }
+            case "nutrition" when a.Length == 1:
+            {
+                var files = Directory.Exists(a[0]) ? Directory.EnumerateFiles(a[0], "*.uasset", SearchOption.AllDirectories).ToList() : [a[0]];
+                int n = 0, over = 0;
+                foreach (var f in files)
+                    foreach (var m in ScumModKit.Build.Ops.NutritionCheck.Masses(CookedPackage.Load(f), Path.GetFileNameWithoutExtension(f)))
+                    {
+                        n++;
+                        if (m.Grams > ScumModKit.Build.Ops.NutritionCheck.Limit) over++;
+                        Console.WriteLine($"{m.Grams,8:0.##} g  {m.Package}  {m.Export}");
+                    }
+                Console.Error.WriteLine($"{n} food resources, {over} over {ScumModKit.Build.Ops.NutritionCheck.Limit} g per 100 g");
                 return 0;
             }
             case "table" when a.Length >= 1:
